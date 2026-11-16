@@ -7,6 +7,7 @@ export type EventDetails = {
   name: string;
   date: string;
   time: string;
+  meetingTime: string | null;
   period: Period;
   sport: Sport;
   location: string;
@@ -14,12 +15,15 @@ export type EventDetails = {
 export type AgendaEvent = Omit<EventDetails, "location"> & { id: string; location: string | null; dateRevision: number };
 export type Reply = { name: string; available: boolean };
 export type PhotographerEvent = AgendaEvent & { reply: Reply | null; needsReconfirmation: boolean };
-export type AdminEvent = AgendaEvent & { replies: Reply[] };
+export type AdminEvent = AgendaEvent & { published: boolean; replies: Reply[] };
 export type PhotographerAgenda = { events: PhotographerEvent[] };
 export type AdminAgenda = { events: AdminEvent[]; invite: string };
 
 const monthFormatter = new Intl.DateTimeFormat("pt-BR", {
   month: "long", year: "numeric", timeZone: "UTC",
+});
+const monthNameFormatter = new Intl.DateTimeFormat("pt-BR", {
+  month: "long", timeZone: "UTC",
 });
 const weekdayFormatter = new Intl.DateTimeFormat("pt-BR", {
   weekday: "long", timeZone: "UTC",
@@ -37,8 +41,9 @@ export function today() {
   return cityDate.format(new Date());
 }
 
-export function monthLabel(month: string) {
-  const label = monthFormatter.format(utcDate(month + "-01"));
+export function monthLabel(month: string, withYear = true) {
+  const formatter = withYear ? monthFormatter : monthNameFormatter;
+  const label = formatter.format(utcDate(month + "-01"));
   return label[0].toUpperCase() + label.slice(1);
 }
 

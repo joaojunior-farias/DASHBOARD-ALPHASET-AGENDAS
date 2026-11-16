@@ -7,6 +7,7 @@ export type EventDetails = {
   name: string;
   date: string;
   time: string;
+  meetingTime?: string | null;
   period: Period;
   sport: Sport;
   location: string;

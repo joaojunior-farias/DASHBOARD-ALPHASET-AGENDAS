@@ -1,8 +1,8 @@
 "use client";
 
 import {
-  ArrowRight, Bike, CalendarDays, Check, ChevronLeft, ChevronRight,
-  Clock3, Footprints, Link2, LogOut, MapPin, Mountain, Pencil, Plus, Shield, Users, X,
+  ArrowRight, Bike, CalendarDays, Check, Clock3, Footprints, Link2, LogOut,
+  MapPin, Mountain, Pencil, Plus, Shield, Trash2, Users, X,
 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
@@ -18,7 +18,7 @@ type Panel =
   | { kind: "reply"; event: PhotographerEvent; available?: boolean }
   | { kind: "invite" }
   | { kind: "user" }
-  | { kind: "remove"; event: AdminEvent };
+  | { kind: "remove"; event: AdminEvent; fromReplies?: boolean };
 
 const sportIcons = { Bike, Corrida: Footprints, Trilha: Mountain, Outro: CalendarDays };
 const sportStyles = { Bike: "bike", Corrida: "run", Trilha: "trail", Outro: "other" };
@@ -58,13 +58,26 @@ function SportTag({ sport }: { sport: Sport }) {
   return <span className={"sport-tag " + sportStyles[sport]}><Icon size={15} />{sport}</span>;
 }
 
-function EventCard({ event, onReplies, onEdit, onReply }: {
+function EventMetadata({ event, showYear = false }: { event: AgendaEvent; showYear?: boolean }) {
+  return (
+    <div className="event-meta">
+      <span><CalendarDays size={16} />{describeDate(event.date).dayMonth}{showYear && ` de ${event.date.slice(0, 4)}`}</span>
+      {event.meetingTime && <span><Clock3 size={16} />Concentração {event.meetingTime}</span>}
+      <span><Clock3 size={16} />Largada {event.time} · {event.period}</span>
+      {event.location && <span className="event-location"><MapPin size={16} />{event.location}</span>}
+    </div>
+  );
+}
+
+function EventCard({ event, onReplies, onEdit, onRemove, onPublish, onReply }: {
   event: AdminEvent | PhotographerEvent;
   onReplies: (eventId: string) => void;
   onEdit: (event: AdminEvent) => void;
+  onRemove: (event: AdminEvent) => void;
+  onPublish: (eventId: string) => Promise<void>;
   onReply: (event: PhotographerEvent, available?: boolean) => void;
 }) {
-  const { weekday, dayMonth } = describeDate(event.date);
+  const { weekday } = describeDate(event.date);
   const admin = "replies" in event;
   const available = admin ? event.replies.filter((reply) => reply.available).length : 0;
   return (
@@ -77,20 +90,21 @@ function EventCard({ event, onReplies, onEdit, onReply }: {
         <SportTag sport={event.sport} />
       </div>
       <h3>{event.name}</h3>
-      <div className="event-meta">
-        <span><CalendarDays size={16} />{dayMonth}</span>
-        <span><Clock3 size={16} />{event.time} <i aria-hidden="true">·</i> {event.period}</span>
-        {event.location && <span className="event-location"><MapPin size={16} />{event.location}</span>}
-      </div>
+      <EventMetadata event={event} />
       {admin ? (
         <div className="card-bottom">
-          <div className="card-counts">
-            <span className="count available"><Check size={15} /> {available} <span>disponíveis</span></span>
-            <span className="count unavailable"><X size={15} /> {event.replies.length - available} <span>indisponíveis</span></span>
-          </div>
+          {event.published === false ? (
+            <PublishEventForm publish={() => onPublish(event.id)} />
+          ) : (
+            <div className="card-counts">
+              <span className="count available"><Check size={15} /> {available} <span>disponíveis</span></span>
+              <span className="count unavailable"><X size={15} /> {event.replies.length - available} <span>indisponíveis</span></span>
+            </div>
+          )}
           <div className="event-admin-actions">
-            <button className="button outline full" onClick={() => onReplies(event.id)}>Ver respostas <ArrowRight size={17} /></button>
+            {event.published !== false && <button className="button outline full" onClick={() => onReplies(event.id)}>Ver respostas <ArrowRight size={17} /></button>}
             <button className="button outline" aria-label="Editar evento" onClick={() => onEdit(event)}><Pencil size={16} />Editar</button>
+            <button className="button outline danger-light" aria-label="Excluir evento" onClick={() => onRemove(event)}><Trash2 size={16} />Excluir</button>
           </div>
         </div>
       ) : (
@@ -176,9 +190,13 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
 
   const events = admin ? adminData?.events : photoEvents;
   const entries = events?.filter((event) => event.date.startsWith(month)) ?? [];
-  const meeting = events?.find((event) => event.date.slice(0, 7) > month);
+  const nextEvent = events?.find((event) => event.date.slice(0, 7) > month);
   const before = events?.findLast((event) => event.date.slice(0, 7) < month);
-  const alternateMonth = (meeting ?? before)?.date.slice(0, 7);
+  const alternateMonth = (nextEvent ?? before)?.date.slice(0, 7);
+  const currentMonth = today().slice(0, 7);
+  const photoMonths = [...new Set([
+    currentMonth, shiftMonth(currentMonth, 1), month, ...(photoEvents ?? []).map((event) => event.date.slice(0, 7)),
+  ])].sort();
   const selected = panel?.kind === "replies" ? adminData?.events.find((event) => event.id === panel.eventId) : undefined;
   const invite = adminData?.invite ?? "";
   const reconfirmationsElsewhere = photoEvents?.filter((event) => event.needsReconfirmation && !event.date.startsWith(month)) ?? [];
@@ -187,16 +205,16 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
   const showSignIn = admin && loadError?.status === 401;
   const showInviteGate = !admin && (loadError?.status === 401 || loadError?.status === 403);
 
-  function finish(message: string) {
+  function finish(message: string, closePanel = true) {
     version.current += 1;
     setMutation(version.current);
-    setPanel(null);
+    if (closePanel) setPanel(null);
     setNotice(message);
   }
 
   async function saveEvent(values: EventDetails, existing?: AdminEvent) {
-    const { event } = await apiRequest<{ event: AgendaEvent }>({
-      action: existing ? "update" : "create",
+    const { event } = await apiRequest<{ event: Omit<AdminEvent, "replies"> }>({
+      action: existing ? "update" : "create-draft",
       eventId: existing?.id,
       dateRevision: existing?.dateRevision,
       ...values,
@@ -210,7 +228,8 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
       ].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)),
     });
     setMonth(event.date.slice(0, 7));
-    finish(dateChanged ? "Data alterada. A equipe precisa responder novamente." : existing ? "Evento atualizado." : "Evento cadastrado.");
+    if (dateChanged && event.published !== false) finish("Data alterada. A equipe precisa responder novamente.");
+    else finish(existing ? "Evento atualizado." : "Rascunho salvo.");
   }
 
   function refreshOnConflict(cause: unknown): never {
@@ -243,6 +262,15 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
     await apiRequest({ action: "remove", eventId: id });
     setAdminData((data) => data && { ...data, events: data.events.filter((event) => event.id !== id) });
     finish("Evento excluído.");
+  }
+
+  async function publishEvent(id: string) {
+    await apiRequest({ action: "publish", eventId: id }).catch(refreshOnConflict);
+    setAdminData((data) => data && {
+      ...data,
+      events: data.events.map((event) => event.id === id ? { ...event, published: true } : event),
+    });
+    finish("Evento publicado na agenda da equipe.", false);
   }
 
   return (
@@ -294,9 +322,18 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
                 <span className="event-total">{entries.length} {entries.length === 1 ? "evento" : "eventos"}</span>
               </div>
               <div className="month-actions">
-                <div className="month-nav" aria-label="Navegação mensal">
-                  <button className="button icon outline" aria-label="Mês anterior" onClick={() => setMonth(shiftMonth(month, -1))}><ChevronLeft size={20} /></button>
-                  <button className="button icon outline" aria-label="Próximo mês" onClick={() => setMonth(shiftMonth(month, 1))}><ChevronRight size={20} /></button>
+                <div className="month-nav" role="group" aria-label="Navegação mensal">
+                  {admin ? (
+                    <>
+                      <button className="button outline" onClick={() => setMonth(shiftMonth(month, -1))}>Mês anterior</button>
+                      <button className="button outline" onClick={() => setMonth(shiftMonth(month, 1))}>Próximo mês</button>
+                    </>
+                  ) : photoMonths.map((option) => (
+                    <button key={option} className="button outline month-choice" aria-pressed={option === month}
+                      onClick={() => setMonth(option)}>
+                      {monthLabel(option, option.slice(0, 4) !== currentMonth.slice(0, 4))}
+                    </button>
+                  ))}
                 </div>
                 {canManageUsers && <button className="button outline" onClick={() => setPanel({ kind: "user" })}><Users size={17} /> Criar usuário</button>}
                 {admin && <button className="button primary" onClick={() => setPanel({ kind: "event" })}><Plus size={19} /> Novo evento</button>}
@@ -308,6 +345,8 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
                 {entries.map((event) => <EventCard key={event.id} event={event}
                   onReplies={(eventId) => setPanel({ kind: "replies", eventId })}
                   onEdit={(event) => setPanel({ kind: "event", event })}
+                  onRemove={(event) => setPanel({ kind: "remove", event })}
+                  onPublish={publishEvent}
                   onReply={(event, available) => setPanel({ kind: "reply", event, available })} />)}
               </div>
             ) : (
@@ -315,7 +354,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
                 <div className="empty-icon"><CalendarDays size={26} /></div>
                 <h3>Nenhum evento neste mês</h3>
                 <p>{admin ? "Os eventos cadastrados para este mês aparecem aqui." : "Quando a Alpha Set cadastrar um evento para este mês, ele aparece aqui."}</p>
-                {alternateMonth && <button className="button outline" onClick={() => setMonth(alternateMonth)}>
+                {admin && alternateMonth && <button className="button outline" onClick={() => setMonth(alternateMonth)}>
                   {monthLabel(alternateMonth)} <ArrowRight size={17} />
                 </button>}
               </div>
@@ -341,14 +380,13 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
             <div>
               <SportTag sport={selected.sport} />
               <h2 id="dialog-title">{selected.name}</h2>
-              <p className="dialog-subtitle">{describeDate(selected.date).dayMonth} · {selected.time} · {selected.period}</p>
-              {selected.location && <p className="dialog-subtitle location-line"><MapPin size={16} />{selected.location}</p>}
+              <EventMetadata event={selected} />
               <div className="reply-groups">
                 <ReplyGroup replies={selected.replies.filter((reply) => reply.available)} available />
                 <ReplyGroup replies={selected.replies.filter((reply) => !reply.available)} available={false} />
               </div>
               <div className="dialog-actions spread">
-                <button className="button danger-light" onClick={() => setPanel({ kind: "remove", event: selected })}>Excluir evento</button>
+                <button className="button danger-light" onClick={() => setPanel({ kind: "remove", event: selected, fromReplies: true })}>Excluir evento</button>
                 <button className="button outline" onClick={() => setPanel({ kind: "event", event: selected })}>Editar evento</button>
               </div>
             </div>
@@ -362,7 +400,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
           {panel.kind === "invite" && <InviteForm invite={invite} />}
           {panel.kind === "user" && canManageUsers && <CreateUserForm save={saveUser} />}
           {panel.kind === "remove" && <ConfirmRemove event={panel.event} remove={() => removeEvent(panel.event.id)}
-            cancel={() => setPanel({ kind: "replies", eventId: panel.event.id })} />}
+            cancel={() => setPanel(panel.fromReplies ? { kind: "replies", eventId: panel.event.id } : null)} />}
         </Dialog>
       )}
       {notice && <div className="toast" role="status"><Check size={19} />{notice}</div>}
@@ -461,6 +499,19 @@ function CreateUserForm({ save }: { save: (username: string, password: string) =
   );
 }
 
+function PublishEventForm({ publish }: { publish: () => Promise<void> }) {
+  const { busy, error, submit } = useSubmit();
+  return (
+    <form className="publish-event" method="post" onSubmit={(event) => void submit(event, publish)}>
+      <div className="publish-event-actions">
+        <span className="event-total">Rascunho</span>
+        <button className="button primary" disabled={busy}>{busy ? "Publicando…" : "Publicar"}</button>
+      </div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </form>
+  );
+}
+
 function EventForm({ existing, month, save }: { existing?: AdminEvent; month: string; save: (values: EventDetails) => Promise<void> }) {
   const [period, setPeriod] = useState<EventDetails["period"]>(existing?.period ?? "Manhã");
   const { busy, error, submit } = useSubmit();
@@ -470,16 +521,18 @@ function EventForm({ existing, month, save }: { existing?: AdminEvent; month: st
   return (
     <form method="post" onSubmit={(event) => void submit(event, (values) => save({
       name: String(values.get("name")), date: String(values.get("date")), time: String(values.get("time")),
+      meetingTime: String(values.get("meetingTime") ?? "") || null,
       period, sport: values.get("sport") as Sport, location: String(values.get("location")),
     }))}>
       <h2 id="dialog-title">{existing ? "Editar evento" : "Novo evento"}</h2>
       <div className="form-fields">
         <label>Nome do evento<input autoFocus name="name" required minLength={2} maxLength={100} placeholder="Ex. Corrida no parque" defaultValue={existing?.name} /></label>
         <label>Localização<input name="location" required minLength={2} maxLength={160} placeholder="Ex. Praia do Caripi, Barcarena" defaultValue={existing?.location ?? ""} /></label>
-        <div className="field-row">
-          <label>Data<input name="date" type="date" required min="2000-01-01" max="2099-12-31" defaultValue={initialDate} onInput={(event) => setDate(event.currentTarget.value)} /></label>
-          <label>Horário<input name="time" type="time" required defaultValue={existing?.time} onChange={(event) => {
-            if (event.currentTarget.value) setPeriod(suggestedPeriod(event.currentTarget.value));
+        <label>Data<input name="date" type="date" required min="2000-01-01" max="2099-12-31" defaultValue={initialDate} onInput={(event) => setDate(event.currentTarget.value)} /></label>
+        <div className="field-row event-times">
+          <label>Horário de concentração<input name="meetingTime" type="time" defaultValue={existing?.meetingTime ?? ""} /></label>
+          <label>Horário de largada<input name="time" type="time" required defaultValue={existing?.time} onInput={(event) => {
+            if (!existing && event.currentTarget.value) setPeriod(suggestedPeriod(event.currentTarget.value));
           }} /></label>
         </div>
         <div className="field-row">
@@ -492,11 +545,11 @@ function EventForm({ existing, month, save }: { existing?: AdminEvent; month: st
           </select></label>
         </div>
       </div>
-      {existing && date && date !== existing.date && (
+      {existing && existing.published !== false && date && date !== existing.date && (
         <p className="date-alert" role="status"><CalendarDays size={16} /> Ao salvar a nova data, as respostas serão zeradas e a equipe precisará responder novamente.</p>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="dialog-actions"><button className="button primary" disabled={busy}>{busy ? "Salvando…" : existing ? "Salvar alterações" : "Cadastrar evento"} <Check size={18} /></button></div>
+      <div className="dialog-actions"><button className="button primary" disabled={busy}>{busy ? "Salvando…" : existing ? "Salvar alterações" : "Salvar rascunho"} <Check size={18} /></button></div>
     </form>
   );
 }
@@ -523,8 +576,7 @@ function ResponseForm({ event, available, save }: {
         <span className={"count " + (available ? "available" : "unavailable")}>{available ? <Check size={16} /> : <X size={16} />}{available ? "Estou disponível" : "Não estou disponível"}</span>
       )}
       <h2 id="dialog-title">{event.name}</h2>
-      <p className="dialog-subtitle">{describeDate(event.date).dayMonth} de {event.date.slice(0, 4)} · {event.time}</p>
-      {event.location && <p className="dialog-subtitle location-line"><MapPin size={16} />{event.location}</p>}
+      <EventMetadata event={event} showYear />
       <div className="form-fields">
         <label>Seu nome<input autoFocus name="name" autoComplete="name" defaultValue={defaultName} minLength={2} maxLength={80} required placeholder="Nome e sobrenome" /></label>
       </div>

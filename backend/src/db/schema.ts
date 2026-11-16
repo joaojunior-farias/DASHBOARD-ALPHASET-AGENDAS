@@ -6,6 +6,8 @@ export const events = pgTable("events", {
   name: text("name").notNull(),
   date: date("date", { mode: "string" }).notNull(),
   time: text("time").notNull(),
+  meetingTime: text("meeting_time"),
+  published: boolean("published").notNull().default(false),
   period: text("period").$type<Period>().notNull(),
   sport: text("sport").$type<Sport>().notNull(),
   location: text("location"),

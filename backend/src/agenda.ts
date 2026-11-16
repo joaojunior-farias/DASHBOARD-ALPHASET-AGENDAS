@@ -13,6 +13,7 @@ const sessionCookie = "alpha_set_equipe";
 const tokenPattern = /^[a-f0-9]{64}$/;
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const responseFields = { name: responses.name, available: responses.available };
+const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 function json(data: unknown, status = 200) {
   return Response.json(data, {
@@ -36,13 +37,14 @@ function cleanName(value: unknown) {
 function eventDetails(input: Record<string, unknown>): EventDetails | null {
   const name = cleanName(input.name);
   const location = cleanName(input.location);
-  const { date, time } = input;
+  const { date, time, meetingTime } = input;
   const period = PERIODS.find((value) => value === input.period);
   const sport = SPORTS.find((value) => value === input.sport);
   if (name.length < 2 || name.length > 100 || typeof date !== "string" || !validDate(date)
-    || typeof time !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)
+    || typeof time !== "string" || !timePattern.test(time)
+    || (meetingTime != null && (typeof meetingTime !== "string" || !timePattern.test(meetingTime)))
     || location.length < 2 || location.length > 160 || !period || !sport) return null;
-  return { name, date, time, period, sport, location };
+  return { name, date, time, meetingTime, period, sport, location };
 }
 
 async function findInvite() {
@@ -100,6 +102,7 @@ export async function GET(request: Request) {
     reply: { ...responseFields, dateRevision: responses.dateRevision },
   }).from(events)
     .leftJoin(responses, and(eq(responses.eventId, events.id), eq(responses.participantId, id)))
+    .where(eq(events.published, true))
     .orderBy(asc(events.date), asc(events.time));
   return json({ events: rows.map(({ event, reply }) => ({
     ...event,
@@ -147,8 +150,8 @@ export async function POST(request: Request) {
     if (!isDateRevision(dateRevision)) return error("Atualize a agenda antes de responder.", 400);
     return getDb().transaction(async (tx) => {
       const [event] = await tx.select({ dateRevision: events.dateRevision })
-        .from(events).where(eq(events.id, eventId)).for("share");
-      if (!event) return error("Este evento foi removido da agenda.", 404);
+        .from(events).where(and(eq(events.id, eventId), eq(events.published, true))).for("share");
+      if (!event) return error("Este evento não está disponível na agenda.", 404);
       if (event.dateRevision !== dateRevision) {
         return error("A data do evento mudou. Confira a nova data antes de responder.", 409);
       }
@@ -168,10 +171,10 @@ export async function POST(request: Request) {
   }
   const { action, eventId, dateRevision = 1 } = input;
   const db = getDb();
-  if (action === "create" || action === "update") {
+  if (action === "create" || action === "create-draft" || action === "update") {
     const details = eventDetails(input);
-    if (!details) return error("Confira o nome, a data, o horário, a localização, o período e a modalidade.", 400);
-    if (action === "create") {
+    if (!details) return error("Confira o nome, a data, os horários, a localização, o período e a modalidade.", 400);
+    if (action !== "update") {
       const [event] = await db.insert(events).values({ id: randomUUID(), ...details }).returning();
       return json({ event }, 201);
     }
@@ -186,6 +189,12 @@ export async function POST(request: Request) {
     return current
       ? error("A data do evento mudou. Reabra o evento para editar a versão atual.", 409)
       : error("Este evento foi removido da agenda.", 404);
+  }
+  if (action === "publish") {
+    if (typeof eventId !== "string" || !uuidPattern.test(eventId)) return error("Evento inválido.", 400);
+    const [event] = await db.update(events).set({ published: true }).where(eq(events.id, eventId))
+      .returning({ id: events.id });
+    return event ? json({ ok: true }) : error("Este evento foi excluído.", 404);
   }
   if (action === "remove") {
     if (typeof eventId !== "string" || !uuidPattern.test(eventId)) return error("Evento inválido.", 400);
