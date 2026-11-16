@@ -1,6 +1,10 @@
-import { adminCookie, adminSessionSeconds, newAdminSession, validAdminSession, verifyAdminPassword } from "./server/admin-session.js";
+import {
+  type AdminSession, adminCookie, adminSessionSeconds, masterUsername, newAdminSession,
+  readAdminSession, usernameKey, verifyMasterPassword,
+} from "./server/admin-session.js";
 import { acceptsJson, cookieOptions, requestSite } from "./server/config.js";
 import { readCookie, writeCookie } from "./server/cookies.js";
+import { authenticateDashboardUser } from "./server/dashboard-users.js";
 
 function json(value: unknown, status = 200) {
   return Response.json(value, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -9,7 +13,8 @@ function json(value: unknown, status = 200) {
 export function GET(request: Request) {
   const site = requestSite(request.headers);
   if (site?.kind !== "dashboard") return json({ error: "Página indisponível." }, 404);
-  return json({ signedIn: validAdminSession(readCookie(request, adminCookie)) });
+  const session = readAdminSession(readCookie(request, adminCookie));
+  return json(session ? { signedIn: true, role: session.role } : { signedIn: false });
 }
 
 export async function POST(request: Request) {
@@ -17,7 +22,7 @@ export async function POST(request: Request) {
   if (site?.kind !== "dashboard") return json({ error: "Página indisponível." }, 404);
   if (!acceptsJson(request.headers, site.origin)) return json({ error: "Solicitação inválida." }, 403);
 
-  let input: { action?: string; password?: unknown };
+  let input: { action?: unknown; username?: unknown; password?: unknown };
   try {
     const value: unknown = await request.json();
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -34,7 +39,18 @@ export async function POST(request: Request) {
     return result;
   }
 
-  if (!verifyAdminPassword(input.password)) return json({ error: "Senha incorreta." }, 401);
-  writeCookie(result, adminCookie, newAdminSession(), cookieOptions(site.origin, adminSessionSeconds));
+  const session = await authenticate(input.username, input.password);
+  if (!session) return json({ error: "Usuário ou senha incorretos." }, 401);
+  writeCookie(result, adminCookie, newAdminSession(session), cookieOptions(site.origin, adminSessionSeconds));
   return result;
+}
+
+async function authenticate(usernameValue: unknown, password: unknown): Promise<AdminSession | null> {
+  const username = usernameKey(usernameValue);
+  if (!username || typeof password !== "string" || password.length > 256) return null;
+  if (username === usernameKey(masterUsername())) {
+    return verifyMasterPassword(password) ? { role: "master", subject: "master" } : null;
+  }
+  const id = await authenticateDashboardUser(username, password);
+  return id ? { role: "operator", subject: id } : null;
 }

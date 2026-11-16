@@ -1,10 +1,16 @@
 import { headers } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { requestSite } from "@/server/config";
+import { dashboardRole } from "@/server/dashboard-session";
 import { Agenda } from "./agenda";
 
 export default async function HomePage() {
-  const site = requestSite(await headers());
+  const incoming = await headers();
+  const site = requestSite(incoming);
   if (!site) notFound();
-  return <Agenda mode={site.kind === "dashboard" ? "admin" : "photographer"} />;
+  if (site.kind === "agenda") return <Agenda mode="photographer" />;
+
+  const role = await dashboardRole(incoming);
+  if (!role) redirect("/entrar");
+  return <Agenda mode="admin" canManageUsers={role === "master"} />;
 }

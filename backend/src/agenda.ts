@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { getDb } from "./db/index.js";
 import { events, responses, settings } from "./db/schema.js";
 import { adminCookie, validAdminSession } from "./server/admin-session.js";
@@ -23,6 +23,10 @@ function json(data: unknown, status = 200) {
 
 function error(message: string, status: number) {
   return json({ error: message }, status);
+}
+
+function isDateRevision(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 2_147_483_647;
 }
 
 function cleanName(value: unknown) {
@@ -75,30 +79,33 @@ export async function GET(request: Request) {
     if (!validAdminSession(readCookie(request, adminCookie))) {
       return error(loginRequired(site.kind), 401);
     }
-    const db = getDb();
-    const allEvents = await db.select().from(events).orderBy(asc(events.date), asc(events.time));
-    const allReplies = await db.select({ eventId: responses.eventId, ...responseFields })
-      .from(responses).orderBy(asc(responses.name));
-    const grouped = new Map<string, { name: string; available: boolean }[]>();
-    for (const { eventId, ...reply } of allReplies) {
-      const list = grouped.get(eventId) ?? [];
-      list.push(reply);
-      grouped.set(eventId, list);
+    const rows = await getDb().select({ event: events, reply: responseFields }).from(events)
+      .leftJoin(responses, and(eq(responses.eventId, events.id), eq(responses.dateRevision, events.dateRevision)))
+      .orderBy(asc(events.date), asc(events.time), asc(events.id), asc(responses.name));
+    const grouped = new Map<string, typeof events.$inferSelect & { replies: { name: string; available: boolean }[] }>();
+    for (const { event, reply } of rows) {
+      const entry = grouped.get(event.id) ?? { ...event, replies: [] };
+      if (reply) entry.replies.push(reply);
+      grouped.set(event.id, entry);
     }
     const invite = new URL(site.agenda);
     invite.hash = "convite=" + await ensureInvite();
-    return json({
-      events: allEvents.map((event) => ({ ...event, replies: grouped.get(event.id) ?? [] })),
-      invite: invite.href,
-    });
+    return json({ events: [...grouped.values()], invite: invite.href });
   }
 
   const id = await participantId(request);
   if (!id) return error(loginRequired(site.kind), 401);
-  const rows = await getDb().select({ event: events, reply: responseFields }).from(events)
+  const rows = await getDb().select({
+    event: events,
+    reply: { ...responseFields, dateRevision: responses.dateRevision },
+  }).from(events)
     .leftJoin(responses, and(eq(responses.eventId, events.id), eq(responses.participantId, id)))
     .orderBy(asc(events.date), asc(events.time));
-  return json({ events: rows.map(({ event, reply }) => ({ ...event, reply })) });
+  return json({ events: rows.map(({ event, reply }) => ({
+    ...event,
+    reply: reply?.dateRevision === event.dateRevision ? { name: reply.name, available: reply.available } : null,
+    needsReconfirmation: reply !== null && reply.dateRevision !== event.dateRevision,
+  })) });
 }
 
 export async function POST(request: Request) {
@@ -132,44 +139,53 @@ export async function POST(request: Request) {
     const id = await participantId(request);
     if (!id) return error("Abra o link de convite para enviar sua resposta.", 401);
     const name = cleanName(input.name);
-    const { eventId, available } = input;
+    const { eventId, available, dateRevision = 1 } = input;
     if (name.length < 2 || name.length > 80 || typeof available !== "boolean"
       || typeof eventId !== "string" || !uuidPattern.test(eventId)) {
       return error("Confira seu nome e a opção de disponibilidade.", 400);
     }
-    const db = getDb();
-    try {
-      await db.insert(responses).values({ eventId, participantId: id, name, available })
+    if (!isDateRevision(dateRevision)) return error("Atualize a agenda antes de responder.", 400);
+    return getDb().transaction(async (tx) => {
+      const [event] = await tx.select({ dateRevision: events.dateRevision })
+        .from(events).where(eq(events.id, eventId)).for("share");
+      if (!event) return error("Este evento foi removido da agenda.", 404);
+      if (event.dateRevision !== dateRevision) {
+        return error("A data do evento mudou. Confira a nova data antes de responder.", 409);
+      }
+
+      await tx.insert(responses).values({ eventId, participantId: id, name, available, dateRevision })
         .onConflictDoUpdate({
           target: [responses.eventId, responses.participantId],
-          set: { name, available },
+          set: { name, available, dateRevision },
         });
-    } catch (cause) {
-      const [event] = await db.select({ id: events.id }).from(events).where(eq(events.id, eventId));
-      if (!event) return error("Este evento foi removido da agenda.", 404);
-      throw cause;
-    }
-    return json({ reply: { name, available } });
+      return json({ reply: { name, available } });
+    });
   }
 
   if (site.kind !== "dashboard") return error("Solicitação inválida.", 404);
   if (!validAdminSession(readCookie(request, adminCookie))) {
     return error(loginRequired(site.kind), 401);
   }
-  const { action, eventId } = input;
+  const { action, eventId, dateRevision = 1 } = input;
   const db = getDb();
   if (action === "create" || action === "update") {
     const details = eventDetails(input);
     if (!details) return error("Confira o nome, a data, o horário, a localização, o período e a modalidade.", 400);
     if (action === "create") {
-      const event = { id: randomUUID(), ...details };
-      await db.insert(events).values(event);
+      const [event] = await db.insert(events).values({ id: randomUUID(), ...details }).returning();
       return json({ event }, 201);
     }
     if (typeof eventId !== "string" || !uuidPattern.test(eventId)) return error("Evento inválido.", 400);
-    const updated = await db.update(events).set(details).where(eq(events.id, eventId)).returning();
-    if (!updated.length) return error("Este evento foi removido da agenda.", 404);
-    return json({ event: updated[0] });
+    if (!isDateRevision(dateRevision)) return error("Atualize a agenda antes de editar.", 400);
+    const [updated] = await db.update(events).set({
+      ...details,
+      dateRevision: sql`case when ${events.date} <> ${details.date}::date then ${events.dateRevision} + 1 else ${events.dateRevision} end`,
+    }).where(and(eq(events.id, eventId), eq(events.dateRevision, dateRevision))).returning();
+    if (updated) return json({ event: updated });
+    const [current] = await db.select({ id: events.id }).from(events).where(eq(events.id, eventId));
+    return current
+      ? error("A data do evento mudou. Reabra o evento para editar a versão atual.", 409)
+      : error("Este evento foi removido da agenda.", 404);
   }
   if (action === "remove") {
     if (typeof eventId !== "string" || !uuidPattern.test(eventId)) return error("Evento inválido.", 400);

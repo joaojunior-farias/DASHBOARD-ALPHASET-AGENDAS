@@ -10,7 +10,9 @@ export function LoginForm() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending.current) return;
-    const password = new FormData(event.currentTarget).get("password");
+    const fields = new FormData(event.currentTarget);
+    const username = fields.get("username");
+    const password = fields.get("password");
     pending.current = true;
     setBusy(true);
     setError("");
@@ -18,13 +20,13 @@ export function LoginForm() {
       const response = await fetch("/api/sessao", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username, password }),
       });
       if (response.ok) {
         window.location.replace("/");
         return;
       }
-      setError(response.status === 401 ? "Senha incorreta." : "Não foi possível entrar. Tente novamente.");
+      setError(response.status === 401 ? "Usuário ou senha incorretos." : "Não foi possível entrar. Tente novamente.");
     } catch {
       setError("Não foi possível entrar. Tente novamente.");
     }
@@ -35,8 +37,11 @@ export function LoginForm() {
   return (
     <form method="post" onSubmit={(event) => void submit(event)}>
       <div className="form-fields">
-        <label>Senha da gestão
-          <input autoFocus name="password" type="password" autoComplete="current-password" required maxLength={256} />
+        <label>Usuário
+          <input autoFocus name="username" autoComplete="username" autoCapitalize="none" required maxLength={80} />
+        </label>
+        <label>Senha
+          <input name="password" type="password" autoComplete="current-password" required maxLength={256} />
         </label>
       </div>
       {error && <p className="form-error" role="alert">{error}</p>}

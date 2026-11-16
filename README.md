@@ -8,7 +8,7 @@ dashboard.alpha7studio.com.br ─┐
 agenda.alpha7studio.com.br ───┘
 ```
 
-O dashboard cadastra os eventos e consulta as respostas. A agenda abre pelo convite dos fotógrafos. A localização aparece no card e na tela de resposta.
+O dashboard pede usuário e senha antes de mostrar eventos e respostas. A conta master cria usuários do painel. A agenda abre pelo convite dos fotógrafos. A localização aparece no card e na tela de resposta.
 
 ## Configurar no Railway
 
@@ -31,7 +31,8 @@ Configure as variáveis na aba **Variables** de cada serviço. Os exemplos abaix
 | `PORT` | Porta injetada pelo Railway | `3001` |
 | `API_SERVICE_TOKEN` | `${{backend.API_SERVICE_TOKEN}}` | Novo token com 64 caracteres hexadecimais |
 | `DATABASE_URL` | — | `${{Postgres.DATABASE_URL}}` |
-| `ADMIN_PASSWORD` | — | Senha da gestão com pelo menos 16 caracteres |
+| `ADMIN_USERNAME` | — | Nome da conta master. O padrão é `AlphaSetStudio` |
+| `ADMIN_PASSWORD` | — | Senha da conta master, de 12 a 256 caracteres |
 | `SESSION_SECRET` | — | Segredo de sessão com pelo menos 32 caracteres |
 
 Para gerar o token de serviço ou o segredo de sessão, rode o comando abaixo separadamente para cada valor. Guarde os valores na aba Variables.
@@ -46,7 +47,7 @@ Para testar sem mudar o deploy que usa a raiz antiga, faça o primeiro deploy da
 
 ## Rodar no Cursor
 
-Abra a raiz que contém `frontend/` e `backend/`. Use Node.js 22.13 ou posterior. Os arquivos locais `frontend/.env` e `backend/.env` são ignorados pelo Git. A senha de teste fica em `ADMIN_PASSWORD` no arquivo do backend. Os arquivos `.env.example` servem de referência para preencher as variáveis no Railway.
+Abra a raiz que contém `frontend/` e `backend/`. Use Node.js 22.13 ou posterior. Os arquivos locais `frontend/.env` e `backend/.env` são ignorados pelo Git. Para entrar localmente, use `AlphaSetStudio` e a senha de teste `ADMIN_PASSWORD` do backend. Os arquivos `.env.example` servem de referência para preencher as variáveis no Railway.
 
 Terminal 1, PostgreSQL de teste
 

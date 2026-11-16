@@ -2,7 +2,7 @@
 
 import {
   ArrowRight, Bike, CalendarDays, Check, ChevronLeft, ChevronRight,
-  Clock3, Footprints, Link2, LogOut, MapPin, Mountain, Plus, Shield, Users, X,
+  Clock3, Footprints, Link2, LogOut, MapPin, Mountain, Pencil, Plus, Shield, Users, X,
 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
@@ -15,8 +15,9 @@ type Mode = "admin" | "photographer";
 type Panel =
   | { kind: "event"; event?: AdminEvent }
   | { kind: "replies"; eventId: string }
-  | { kind: "reply"; event: PhotographerEvent; available: boolean }
+  | { kind: "reply"; event: PhotographerEvent; available?: boolean }
   | { kind: "invite" }
+  | { kind: "user" }
   | { kind: "remove"; event: AdminEvent };
 
 const sportIcons = { Bike, Corrida: Footprints, Trilha: Mountain, Outro: CalendarDays };
@@ -26,8 +27,11 @@ class RequestError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
-async function agendaRequest<T>(input?: Record<string, unknown>) {
-  const response = await fetch("/api/agenda", input ? {
+async function apiRequest<T>(
+  input?: Record<string, unknown>,
+  endpoint: "/api/agenda" | "/api/usuarios" = "/api/agenda",
+) {
+  const response = await fetch(endpoint, input ? {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -54,10 +58,11 @@ function SportTag({ sport }: { sport: Sport }) {
   return <span className={"sport-tag " + sportStyles[sport]}><Icon size={15} />{sport}</span>;
 }
 
-function EventCard({ event, onReplies, onReply }: {
+function EventCard({ event, onReplies, onEdit, onReply }: {
   event: AdminEvent | PhotographerEvent;
   onReplies: (eventId: string) => void;
-  onReply: (event: PhotographerEvent, available: boolean) => void;
+  onEdit: (event: AdminEvent) => void;
+  onReply: (event: PhotographerEvent, available?: boolean) => void;
 }) {
   const { weekday, dayMonth } = describeDate(event.date);
   const admin = "replies" in event;
@@ -83,22 +88,32 @@ function EventCard({ event, onReplies, onReply }: {
             <span className="count available"><Check size={15} /> {available} <span>disponíveis</span></span>
             <span className="count unavailable"><X size={15} /> {event.replies.length - available} <span>indisponíveis</span></span>
           </div>
-          <button className="button outline full" onClick={() => onReplies(event.id)}>Ver respostas <ArrowRight size={17} /></button>
+          <div className="event-admin-actions">
+            <button className="button outline full" onClick={() => onReplies(event.id)}>Ver respostas <ArrowRight size={17} /></button>
+            <button className="button outline" aria-label="Editar evento" onClick={() => onEdit(event)}><Pencil size={16} />Editar</button>
+          </div>
         </div>
       ) : (
         <div className="card-bottom">
           {event.reply && <p className="sent" role="status"><Check size={16} /> Resposta enviada · {event.reply.available ? "Disponível" : "Indisponível"}</p>}
-          <div className="response-buttons">
-            <button className="button yes" onClick={() => onReply(event, true)}><Check size={16} />Estou disponível</button>
-            <button className="button outline no" onClick={() => onReply(event, false)}><X size={16} />Não estou disponível</button>
-          </div>
+          {event.needsReconfirmation ? (
+            <>
+              <p className="date-alert"><CalendarDays size={16} /> A data mudou. Responda para a nova data.</p>
+              <button className="button primary full" onClick={() => onReply(event)}>Reconfirmar disponibilidade <ArrowRight size={17} /></button>
+            </>
+          ) : (
+            <div className="response-buttons">
+              <button className="button yes" onClick={() => onReply(event, true)}><Check size={16} />Estou disponível</button>
+              <button className="button outline no" onClick={() => onReply(event, false)}><X size={16} />Não estou disponível</button>
+            </div>
+          )}
         </div>
       )}
     </article>
   );
 }
 
-export function Agenda({ mode }: { mode: Mode }) {
+export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManageUsers?: boolean }) {
   const admin = mode === "admin";
   const [adminData, setAdminData] = useState<AdminAgenda | null>(null);
   const [photoEvents, setPhotoEvents] = useState<PhotographerEvent[] | null>(null);
@@ -119,15 +134,15 @@ export function Agenda({ mode }: { mode: Mode }) {
       const isCurrent = () => active && started === sequence && currentVersion === version.current;
       try {
         if (mode === "admin") {
-          const data = await agendaRequest<AdminAgenda>();
+          const data = await apiRequest<AdminAgenda>();
           if (isCurrent()) setAdminData(data);
         } else {
           const token = new URLSearchParams(window.location.hash.slice(1)).get("convite");
           if (token) {
-            await agendaRequest({ action: "join", token });
+            await apiRequest({ action: "join", token });
             window.history.replaceState(null, "", window.location.pathname + window.location.search);
           }
-          const data = await agendaRequest<PhotographerAgenda>();
+          const data = await apiRequest<PhotographerAgenda>();
           if (isCurrent()) setPhotoEvents(data.events);
         }
         if (isCurrent()) setLoadError(null);
@@ -166,6 +181,8 @@ export function Agenda({ mode }: { mode: Mode }) {
   const alternateMonth = (meeting ?? before)?.date.slice(0, 7);
   const selected = panel?.kind === "replies" ? adminData?.events.find((event) => event.id === panel.eventId) : undefined;
   const invite = adminData?.invite ?? "";
+  const reconfirmationsElsewhere = photoEvents?.filter((event) => event.needsReconfirmation && !event.date.startsWith(month)) ?? [];
+  const replyEvent = panel?.kind === "reply" ? photoEvents?.find((event) => event.id === panel.event.id) : undefined;
   const canStart = Boolean(events);
   const showSignIn = admin && loadError?.status === 401;
   const showInviteGate = !admin && (loadError?.status === 401 || loadError?.status === 403);
@@ -178,27 +195,52 @@ export function Agenda({ mode }: { mode: Mode }) {
   }
 
   async function saveEvent(values: EventDetails, existing?: AdminEvent) {
-    const { event } = await agendaRequest<{ event: AgendaEvent }>({
-      action: existing ? "update" : "create", eventId: existing?.id, ...values,
-    });
+    const { event } = await apiRequest<{ event: AgendaEvent }>({
+      action: existing ? "update" : "create",
+      eventId: existing?.id,
+      dateRevision: existing?.dateRevision,
+      ...values,
+    }).catch(refreshOnConflict);
+    const dateChanged = existing !== undefined && existing.dateRevision !== event.dateRevision;
     setAdminData((data) => data && {
       ...data,
-      events: [...data.events.filter((item) => item.id !== event.id), { ...event, replies: existing?.replies ?? [] }]
-        .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)),
+      events: [
+        ...data.events.filter((item) => item.id !== event.id),
+        { ...event, replies: dateChanged ? [] : data.events.find((item) => item.id === event.id)?.replies ?? [] },
+      ].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)),
     });
     setMonth(event.date.slice(0, 7));
-    finish(existing ? "Evento atualizado." : "Evento cadastrado.");
+    finish(dateChanged ? "Data alterada. A equipe precisa responder novamente." : existing ? "Evento atualizado." : "Evento cadastrado.");
   }
 
-  async function saveReply(eventId: string, name: string, available: boolean) {
-    const { reply } = await agendaRequest<{ reply: Reply }>({ action: "reply", eventId, name, available });
-    setPhotoEvents((events) => events?.map((event) => event.id === eventId ? { ...event, reply } : event) ?? null);
+  function refreshOnConflict(cause: unknown): never {
+    if (cause instanceof RequestError && (cause.status === 409 || cause.status === 404)) {
+      setReload((count) => count + 1);
+    }
+    throw cause;
+  }
+
+  async function saveReply(event: PhotographerEvent, name: string, available: boolean) {
+    const { reply } = await apiRequest<{ reply: Reply }>({
+      action: "reply", eventId: event.id, dateRevision: event.dateRevision, name, available,
+    }).catch(refreshOnConflict);
+    setPhotoEvents((events) => events?.map((item) =>
+      item.id === event.id && item.dateRevision === event.dateRevision
+        ? { ...item, reply, needsReconfirmation: false } : item
+    ) ?? null);
+    setMonth(event.date.slice(0, 7));
     try { localStorage.setItem("alpha-set-nome", reply.name); } catch { /* The reply is already saved. */ }
     finish("Disponibilidade enviada para a Alpha Set.");
   }
 
+  async function saveUser(username: string, password: string) {
+    await apiRequest({ username, password }, "/api/usuarios");
+    setPanel(null);
+    setNotice("Usuário criado.");
+  }
+
   async function removeEvent(id: string) {
-    await agendaRequest({ action: "remove", eventId: id });
+    await apiRequest({ action: "remove", eventId: id });
     setAdminData((data) => data && { ...data, events: data.events.filter((event) => event.id !== id) });
     finish("Evento excluído.");
   }
@@ -227,6 +269,23 @@ export function Agenda({ mode }: { mode: Mode }) {
           </div>
         </section>
 
+        {reconfirmationsElsewhere.length > 0 && (
+          <section className="reconfirm-section" aria-labelledby="reconfirm-title">
+            <h2 id="reconfirm-title">Eventos com nova data</h2>
+            <ul>
+              {reconfirmationsElsewhere.map((event) => (
+                <li key={event.id}>
+                  <span><strong>{event.name}</strong><small>{describeDate(event.date).dayMonth} de {event.date.slice(0, 4)}</small></span>
+                  <button className="button outline" onClick={() => {
+                    setMonth(event.date.slice(0, 7));
+                    setPanel({ kind: "reply", event });
+                  }}>Reconfirmar</button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {canStart ? (
           <section className="month-section" aria-label="Eventos por mês">
             <div className="month-header">
@@ -239,6 +298,7 @@ export function Agenda({ mode }: { mode: Mode }) {
                   <button className="button icon outline" aria-label="Mês anterior" onClick={() => setMonth(shiftMonth(month, -1))}><ChevronLeft size={20} /></button>
                   <button className="button icon outline" aria-label="Próximo mês" onClick={() => setMonth(shiftMonth(month, 1))}><ChevronRight size={20} /></button>
                 </div>
+                {canManageUsers && <button className="button outline" onClick={() => setPanel({ kind: "user" })}><Users size={17} /> Criar usuário</button>}
                 {admin && <button className="button primary" onClick={() => setPanel({ kind: "event" })}><Plus size={19} /> Novo evento</button>}
               </div>
             </div>
@@ -247,6 +307,7 @@ export function Agenda({ mode }: { mode: Mode }) {
               <div className="event-grid">
                 {entries.map((event) => <EventCard key={event.id} event={event}
                   onReplies={(eventId) => setPanel({ kind: "replies", eventId })}
+                  onEdit={(event) => setPanel({ kind: "event", event })}
                   onReply={(event, available) => setPanel({ kind: "reply", event, available })} />)}
               </div>
             ) : (
@@ -293,9 +354,13 @@ export function Agenda({ mode }: { mode: Mode }) {
             </div>
           )}
           {panel.kind === "replies" && !selected && <h2 id="dialog-title">Evento removido</h2>}
-          {panel.kind === "reply" && <ResponseForm event={panel.event} available={panel.available}
-            save={(name) => saveReply(panel.event.id, name, panel.available)} />}
+          {panel.kind === "reply" && (replyEvent ? (
+            <ResponseForm key={replyEvent.dateRevision} event={replyEvent}
+              available={replyEvent.dateRevision === panel.event.dateRevision ? panel.available : undefined}
+              save={(name, available) => saveReply(replyEvent, name, available)} />
+          ) : <h2 id="dialog-title">Evento removido</h2>)}
           {panel.kind === "invite" && <InviteForm invite={invite} />}
+          {panel.kind === "user" && canManageUsers && <CreateUserForm save={saveUser} />}
           {panel.kind === "remove" && <ConfirmRemove event={panel.event} remove={() => removeEvent(panel.event.id)}
             cancel={() => setPanel({ kind: "replies", eventId: panel.event.id })} />}
         </Dialog>
@@ -378,10 +443,30 @@ function useSubmit() {
   return { busy, error, submit };
 }
 
+function CreateUserForm({ save }: { save: (username: string, password: string) => Promise<void> }) {
+  const { busy, error, submit } = useSubmit();
+  return (
+    <form method="post" onSubmit={(event) => void submit(event, (values) =>
+      save(String(values.get("username")), String(values.get("password")))
+    )}>
+      <h2 id="dialog-title">Criar usuário</h2>
+      <p className="dialog-subtitle">A conta terá acesso ao painel de eventos.</p>
+      <div className="form-fields">
+        <label>Usuário<input autoFocus name="username" autoComplete="off" autoCapitalize="none" required minLength={2} maxLength={80} /></label>
+        <label>Senha<input name="password" type="password" autoComplete="new-password" required minLength={12} maxLength={256} /></label>
+      </div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="dialog-actions"><button className="button primary" disabled={busy}>{busy ? "Criando…" : "Criar usuário"} <Check size={18} /></button></div>
+    </form>
+  );
+}
+
 function EventForm({ existing, month, save }: { existing?: AdminEvent; month: string; save: (values: EventDetails) => Promise<void> }) {
   const [period, setPeriod] = useState<EventDetails["period"]>(existing?.period ?? "Manhã");
   const { busy, error, submit } = useSubmit();
-  const date = today();
+  const currentDate = today();
+  const initialDate = existing?.date ?? (currentDate.startsWith(month) ? currentDate : month + "-01");
+  const [date, setDate] = useState(initialDate);
   return (
     <form method="post" onSubmit={(event) => void submit(event, (values) => save({
       name: String(values.get("name")), date: String(values.get("date")), time: String(values.get("time")),
@@ -392,7 +477,7 @@ function EventForm({ existing, month, save }: { existing?: AdminEvent; month: st
         <label>Nome do evento<input autoFocus name="name" required minLength={2} maxLength={100} placeholder="Ex. Corrida no parque" defaultValue={existing?.name} /></label>
         <label>Localização<input name="location" required minLength={2} maxLength={160} placeholder="Ex. Praia do Caripi, Barcarena" defaultValue={existing?.location ?? ""} /></label>
         <div className="field-row">
-          <label>Data<input name="date" type="date" required min="2000-01-01" max="2099-12-31" defaultValue={existing?.date ?? (date.startsWith(month) ? date : month + "-01")} /></label>
+          <label>Data<input name="date" type="date" required min="2000-01-01" max="2099-12-31" defaultValue={initialDate} onInput={(event) => setDate(event.currentTarget.value)} /></label>
           <label>Horário<input name="time" type="time" required defaultValue={existing?.time} onChange={(event) => {
             if (event.currentTarget.value) setPeriod(suggestedPeriod(event.currentTarget.value));
           }} /></label>
@@ -407,29 +492,51 @@ function EventForm({ existing, month, save }: { existing?: AdminEvent; month: st
           </select></label>
         </div>
       </div>
+      {existing && date && date !== existing.date && (
+        <p className="date-alert" role="status"><CalendarDays size={16} /> Ao salvar a nova data, as respostas serão zeradas e a equipe precisará responder novamente.</p>
+      )}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="dialog-actions"><button className="button primary" disabled={busy}>{busy ? "Salvando…" : existing ? "Salvar alterações" : "Cadastrar evento"} <Check size={18} /></button></div>
     </form>
   );
 }
 
-function ResponseForm({ event, available, save }: { event: PhotographerEvent; available: boolean; save: (name: string) => Promise<void> }) {
+function ResponseForm({ event, available, save }: {
+  event: PhotographerEvent;
+  available?: boolean;
+  save: (name: string, available: boolean) => Promise<void>;
+}) {
   const { busy, error, submit } = useSubmit();
   const [defaultName] = useState(() => {
     if (event.reply?.name) return event.reply.name;
     try { return localStorage.getItem("alpha-set-nome") ?? ""; } catch { return ""; }
   });
   return (
-    <form method="post" onSubmit={(submission) => void submit(submission, (values) => save(String(values.get("name"))))}>
-      <span className={"count " + (available ? "available" : "unavailable")}>{available ? <Check size={16} /> : <X size={16} />}{available ? "Estou disponível" : "Não estou disponível"}</span>
+    <form method="post" onSubmit={(submission) => void submit(submission, (values) => {
+      const chosen = values.get("available");
+      if (available === undefined && chosen !== "yes" && chosen !== "no") {
+        throw new RequestError("Escolha uma opção de disponibilidade.", 400);
+      }
+      return save(String(values.get("name")), available ?? (chosen === "yes"));
+    })}>
+      {available !== undefined && (
+        <span className={"count " + (available ? "available" : "unavailable")}>{available ? <Check size={16} /> : <X size={16} />}{available ? "Estou disponível" : "Não estou disponível"}</span>
+      )}
       <h2 id="dialog-title">{event.name}</h2>
-      <p className="dialog-subtitle">{describeDate(event.date).dayMonth} · {event.time}</p>
+      <p className="dialog-subtitle">{describeDate(event.date).dayMonth} de {event.date.slice(0, 4)} · {event.time}</p>
       {event.location && <p className="dialog-subtitle location-line"><MapPin size={16} />{event.location}</p>}
       <div className="form-fields">
         <label>Seu nome<input autoFocus name="name" autoComplete="name" defaultValue={defaultName} minLength={2} maxLength={80} required placeholder="Nome e sobrenome" /></label>
       </div>
+      {available === undefined && (
+        <fieldset className="reconfirm-options">
+          <legend>Disponibilidade para a nova data</legend>
+          <label><input type="radio" name="available" value="yes" required /> Estou disponível</label>
+          <label><input type="radio" name="available" value="no" required /> Não estou disponível</label>
+        </fieldset>
+      )}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="dialog-actions"><button className="button primary" disabled={busy}>{busy ? "Enviando…" : "Enviar resposta"} <ArrowRight size={18} /></button></div>
+      <div className="dialog-actions"><button className="button primary" disabled={busy}>{busy ? "Enviando…" : available === undefined ? "Reconfirmar" : "Enviar resposta"} <ArrowRight size={18} /></button></div>
     </form>
   );
 }

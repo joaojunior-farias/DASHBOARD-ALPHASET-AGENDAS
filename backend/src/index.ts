@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { serve } from "@hono/node-server";
 import * as agenda from "./agenda.js";
 import * as session from "./session.js";
+import * as users from "./users.js";
 import { closeDb } from "./db/index.js";
 
 const token = process.env.API_SERVICE_TOKEN;
@@ -23,6 +24,13 @@ function authorized(request: Request) {
   return attempt.length === authorization.length && timingSafeEqual(attempt, authorization);
 }
 
+type Handler = (request: Request) => Response | Promise<Response>;
+const routes = new Map<string, { GET?: Handler; POST?: Handler }>([
+  ["/api/agenda", agenda],
+  ["/api/sessao", session],
+  ["/api/usuarios", users],
+]);
+
 const server = serve({
   hostname: process.env.HOST || "::",
   port,
@@ -30,12 +38,13 @@ const server = serve({
     if (!authorized(request)) return error("Acesso restrito.", 401);
 
     const path = new URL(request.url).pathname;
-    const handlers = path === "/api/agenda" ? agenda : path === "/api/sessao" ? session : null;
+    const handlers = routes.get(path);
     if (!handlers) return error("Página indisponível.", 404);
+    const method = request.method;
+    const handle = method === "GET" || method === "POST" ? handlers[method] : undefined;
+    if (!handle) return error("Método indisponível.", 405);
     try {
-      if (request.method === "GET") return await handlers.GET(request);
-      if (request.method === "POST") return await handlers.POST(request);
-      return error("Método indisponível.", 405);
+      return await handle(request);
     } catch (cause) {
       console.error("Falha no processamento da API:", cause instanceof Error ? cause.message : "Erro desconhecido.");
       return error("Não foi possível processar a solicitação.", 500);

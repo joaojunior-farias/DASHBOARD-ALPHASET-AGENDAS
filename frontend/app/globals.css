@@ -175,10 +175,26 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .event-meta .event-location { width: 100%; min-width: 0; overflow-wrap: anywhere; }
 .location-line { display: flex; align-items: flex-start; gap: 6px; }
 .location-line svg { margin-top: 3px; }
-.login-page { max-width: 450px; padding-block: 48px; }
+.login-page { display: grid; align-content: center; max-width: 450px; min-height: 100svh; padding-block: 32px; }
 .login-page .brand { margin-bottom: 26px; }
 .login-card { background: #fff; border: 1px solid var(--line); border-radius: 15px; padding: 22px; }
 .login-card h1 { margin: 0; font-size: 28px; letter-spacing: -.04em; }
 @media (max-width: 480px) {
   .top-actions { gap: 6px; }
 }
+
+.event-admin-actions { display: flex; gap: 7px; }
+.event-admin-actions .full { flex: 1; width: auto; }
+.date-alert { display: flex; align-items: flex-start; gap: 7px; color: var(--orange-strong); font-size: 13px; font-weight: 700; margin: 0 0 10px; }
+.date-alert svg { margin-top: 2px; }
+.dialog .date-alert { margin: 14px 0 0; }
+.reconfirm-section { margin-top: 20px; background: var(--orange-pale); border: 1px solid #f4d4bd; border-radius: 12px; padding: 13px 16px; }
+.reconfirm-section h2 { font-size: 16px; margin: 0; }
+.reconfirm-section ul { list-style: none; margin: 9px 0 0; padding: 0; display: grid; gap: 8px; }
+.reconfirm-section li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.reconfirm-section li span { overflow-wrap: anywhere; }
+.reconfirm-section small { display: block; color: var(--muted); margin-top: 2px; }
+.reconfirm-options { border: 0; padding: 0; margin: 16px 0 0; display: grid; gap: 7px; }
+.reconfirm-options legend { font-size: 13px; font-weight: 800; margin-bottom: 7px; padding: 0; }
+.reconfirm-options label { display: flex; align-items: center; gap: 8px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; cursor: pointer; }
+.reconfirm-options input { accent-color: var(--orange-strong); }
