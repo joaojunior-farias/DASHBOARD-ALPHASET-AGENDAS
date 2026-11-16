@@ -1,7 +1,10 @@
-/node_modules/
-/.next/
-/.postgres/
-/next-env.d.ts
+node_modules/
+.next/
+dist/
+.postgres/
+next-env.d.ts
 *.tsbuildinfo
 .env*
 !.env.example
+.DS_Store
+._*

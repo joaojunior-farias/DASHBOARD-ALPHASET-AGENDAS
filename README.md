@@ -1,43 +1,76 @@
 # Agenda Alpha Set
 
-O painel cadastra eventos e mostra as respostas da equipe. A agenda dos fotógrafos abre pelo convite copiado no painel. O campo **Localização** é obrigatório no cadastro e aparece no card e na tela de resposta.
+Um repositório GitHub com duas pastas executáveis de forma independente. O frontend recebe os dois domínios. A API e o banco ficam na rede privada do Railway.
 
-## Rodar no VS Code
+```text
+dashboard.alpha7studio.com.br ─┐
+                             ├─ frontend → backend → PostgreSQL
+agenda.alpha7studio.com.br ───┘
+```
 
-Abra esta pasta em **Arquivo → Abrir Pasta**. Use Node.js 22.13 ou posterior. O arquivo `.env` já vem configurado para um PostgreSQL local e contém a senha de teste do painel em `ADMIN_PASSWORD`.
+O dashboard cadastra os eventos e consulta as respostas. A agenda abre pelo convite dos fotógrafos. A localização aparece no card e na tela de resposta.
 
-No primeiro terminal, instale as dependências e inicie o banco de desenvolvimento. Deixe o processo rodando.
+## Configurar no Railway
+
+No mesmo projeto e ambiente do Railway, conecte **dois serviços ao mesmo repositório do GitHub**. O serviço da captura pode servir de frontend. Em **Settings → Root Directory**, defina a pasta que cada serviço executa. [Guia de monorepos do Railway](https://docs.railway.com/deployments/monorepo)
+
+| Serviço | Root Directory | Build | Start | Pre-deploy |
+| --- | --- | --- | --- | --- |
+| frontend | `/frontend` | `npm run build` | `npm start` | — |
+| backend | `/backend` | `npm run build` | `npm start` | `npm run db:migrate` |
+
+Adicione ou selecione o serviço PostgreSQL no mesmo ambiente. A tabela de migrações existente é compatível com a versão anterior. Use o mesmo PostgreSQL se estiver fazendo a transição de um ambiente com dados. [PostgreSQL no Railway](https://docs.railway.com/databases/postgresql) · [Comando de pré-deploy](https://docs.railway.com/deployments/pre-deploy-command)
+
+Configure as variáveis na aba **Variables** de cada serviço. Os exemplos abaixo usam os nomes de serviços `backend` e `Postgres`. Troque esses nomes nas referências se seus serviços tiverem outros rótulos.
+
+| Variável | frontend | backend |
+| --- | --- | --- |
+| `DASHBOARD_URL` | `https://dashboard.alpha7studio.com.br` | `https://dashboard.alpha7studio.com.br` |
+| `AGENDA_URL` | `https://agenda.alpha7studio.com.br` | `https://agenda.alpha7studio.com.br` |
+| `BACKEND_URL` | `http://${{backend.RAILWAY_PRIVATE_DOMAIN}}:${{backend.PORT}}` | — |
+| `PORT` | Porta injetada pelo Railway | `3001` |
+| `API_SERVICE_TOKEN` | `${{backend.API_SERVICE_TOKEN}}` | Novo token com 64 caracteres hexadecimais |
+| `DATABASE_URL` | — | `${{Postgres.DATABASE_URL}}` |
+| `ADMIN_PASSWORD` | — | Senha da gestão com pelo menos 16 caracteres |
+| `SESSION_SECRET` | — | Segredo de sessão com pelo menos 32 caracteres |
+
+Para gerar o token de serviço ou o segredo de sessão, rode o comando abaixo separadamente para cada valor. Guarde os valores na aba Variables.
 
 ```sh
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
+
+No serviço **frontend**, vá em **Settings → Public Networking → Custom Domain**. Cadastre `dashboard.alpha7studio.com.br` e `agenda.alpha7studio.com.br`, depois adicione na Cloudflare os registros DNS que o Railway indicar para cada domínio. Use apenas o endereço privado do Railway para o backend. [Domínios no Railway](https://docs.railway.com/networking/domains/working-with-domains)
+
+Para testar sem mudar o deploy que usa a raiz antiga, faça o primeiro deploy da separação em uma branch e um ambiente de teste. Nesse ambiente, use os endereços de teste da equipe nas variáveis dos dois serviços e um PostgreSQL separado. Quando for trocar o serviço de produção, a mudança do **Root Directory** deve acompanhar a versão do repositório com as duas pastas.
+
+## Rodar no Cursor
+
+Abra a raiz que contém `frontend/` e `backend/`. Use Node.js 22.13 ou posterior. Os arquivos locais `frontend/.env` e `backend/.env` são ignorados pelo Git. A senha de teste fica em `ADMIN_PASSWORD` no arquivo do backend. Os arquivos `.env.example` servem de referência para preencher as variáveis no Railway.
+
+Terminal 1, PostgreSQL de teste
+
+```sh
+cd backend
 npm ci
 npm run db:local
 ```
 
-No segundo terminal, aplique as migrações e inicie o aplicativo.
+Terminal 2, API
 
 ```sh
+cd backend
 npm run db:migrate
+npm run build
 npm run dev
 ```
 
-| Tela | Endereço local | Endereço previsto em produção |
-| --- | --- | --- |
-| Painel | http://localhost:3000 | https://dashboard.alpha7studio.com.br |
-| Agenda | http://127.0.0.1:3000 | https://agenda.alpha7studio.com.br |
+Terminal 3, telas
 
-Abra o painel pelo endereço com `localhost`, entre com a senha do `.env` e use **Link da equipe** para testar a agenda. O link de teste funciona no computador que está rodando o app. Os dois endereços chegam ao mesmo aplicativo, que decide a tela pelo nome do host. Em cada ambiente, painel e agenda compartilham o mesmo banco. Use um banco próprio para desenvolvimento, outro para homologação se desejar e outro para produção.
+```sh
+cd frontend
+npm ci
+npm run dev
+```
 
-O PostgreSQL local grava em `.postgres/`. Se você já tiver um PostgreSQL de desenvolvimento, aponte `DATABASE_URL` para ele e pule `npm run db:local`. Para checar ou compilar o código, use `npm run typecheck` e `npm run build`.
-
-## Publicação futura
-
-A aplicação roda como um serviço Node.js. Os dois domínios apontam para o mesmo serviço.
-
-1. Configure no serviço as variáveis de `.env.example`. Use `DATABASE_URL` do PostgreSQL de produção, uma senha forte exclusiva em `ADMIN_PASSWORD` e um valor aleatório exclusivo com pelo menos 32 caracteres em `SESSION_SECRET`.
-2. Configure `npm run build` para compilar, `npm run db:migrate` para preparar o banco antes da publicação e `npm start` para iniciar. O processo ouve a porta `PORT` do provedor.
-3. Cadastre os dois domínios personalizados no serviço e crie na Cloudflare os registros DNS indicados pela hospedagem. O painel usa `DASHBOARD_URL`; o botão **Link da equipe** monta o convite a partir de `AGENDA_URL`.
-4. Abra o dashboard por HTTPS, teste a entrada e confira o convite em outro navegador.
-
-No Railway, você pode referenciar a variável `DATABASE_URL` do serviço PostgreSQL no serviço da aplicação. Consulte a [documentação do PostgreSQL no Railway](https://docs.railway.com/databases/postgresql) e o [guia de domínios personalizados](https://docs.railway.com/networking/domains/working-with-domains).
-
-O `.env` é local e está no `.gitignore`. Para gerar segredos novos, rode `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` separadamente para cada valor. Este projeto começa com um banco vazio. Para levar dados do site anterior para o PostgreSQL, trate a importação como uma etapa própria antes de trocar os endereços em produção.
+Abra o painel em http://localhost:3000. O convite da equipe aponta para http://127.0.0.1:3000. O frontend acessa internamente a API em http://127.0.0.1:3001. Ao editar o backend, rode `npm run build` de novo para que o processo em modo de desenvolvimento recarregue o JavaScript. Se você usa outro PostgreSQL local, ajuste o `DATABASE_URL` no backend e inicie esse banco em vez de executar `npm run db:local`.
