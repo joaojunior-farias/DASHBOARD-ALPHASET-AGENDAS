@@ -27,7 +27,7 @@ function cleanText(value: unknown) {
 
 export async function GET(request: Request) {
   if (requestSite(request.headers)?.kind !== "dashboard") return error("Página indisponível.", 404);
-  if (!validAdminSession(readCookie(request, adminCookie))) return error("Entre no painel para continuar.", 401);
+  if (!await validAdminSession(readCookie(request, adminCookie))) return error("Entre no painel para continuar.", 401);
   const month = new URL(request.url).searchParams.get("mes");
   const start = `${month}-01`;
   if (!validDate(start)) return error("Escolha um mês válido.", 400);
@@ -48,7 +48,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const site = requestSite(request.headers);
   if (site?.kind !== "dashboard") return error("Página indisponível.", 404);
-  if (!validAdminSession(readCookie(request, adminCookie))) return error("Entre no painel para continuar.", 401);
+  if (!await validAdminSession(readCookie(request, adminCookie))) return error("Entre no painel para continuar.", 401);
   if (!acceptsJson(request.headers, site.origin)) return error("Solicitação inválida.", 403);
   const value: unknown = await request.json().catch(() => null);
   if (!value || typeof value !== "object" || Array.isArray(value)) return error("Dados inválidos.", 400);

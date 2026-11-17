@@ -1,13 +1,13 @@
 import { requestSite } from "./config";
 
-type Endpoint = "/api/agenda" | "/api/calendario" | "/api/sessao" | "/api/usuarios" | "/api/fotografos";
+type Endpoint = "/api/agenda" | "/api/calendario" | "/api/sessao" | "/api/usuarios" | "/api/fotografos" | "/api/perfil";
 type HeadersReader = Pick<Headers, "get">;
 
 function proxyError(message: string, status: number) {
   return Response.json({ error: message }, { status, headers: { "Cache-Control": "private, no-store" } });
 }
 
-async function readBody(request: Request) {
+async function readBody(request: Request, limit: number) {
   const body = request.body;
   if (!body) return "";
   const reader = body.getReader();
@@ -19,7 +19,7 @@ async function readBody(request: Request) {
       const { value, done } = await reader.read();
       if (done) return text + decoder.decode();
       size += value.byteLength;
-      if (size > 4096) {
+      if (size > limit) {
         await reader.cancel();
         return null;
       }
@@ -77,7 +77,7 @@ export async function callBackend(incoming: HeadersReader, endpoint: Endpoint, b
 }
 
 export async function forwardPost(request: Request, endpoint: Endpoint) {
-  const body = await readBody(request);
+  const body = await readBody(request, endpoint === "/api/perfil" ? 50000 : 4096);
   if (body === null) return proxyError("Solicitação muito grande.", 413);
   return callBackend(request.headers, endpoint, body);
 }

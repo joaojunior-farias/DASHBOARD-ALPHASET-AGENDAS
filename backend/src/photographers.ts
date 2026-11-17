@@ -3,7 +3,7 @@ import { and, eq, lte } from "drizzle-orm";
 import { getDb } from "./db/index.js";
 import { photographers, photographerSessions } from "./db/schema.js";
 import { acceptsJson, requestSite } from "./server/config.js";
-import { matchesPassword, passwordCredentials } from "./server/passwords.js";
+import { matchesPassword, passwordCredentials, validPassword } from "./server/passwords.js";
 import { newPhotographerSession, readPhotographerSessionHash, setPhotographerSession } from "./server/photographer-session.js";
 import { acceptTeamInvite, clearTeamInvite, invitedParticipant } from "./server/team-invite.js";
 
@@ -32,12 +32,12 @@ export async function POST(request: Request) {
     setPhotographerSession(result, site.origin, "");
     return result;
   }
-  if (input.action !== "cadastro" && input.action !== "entrar") return json({ error: "Solicitação inválida." }, 400);
+  if (input.action !== "cadastro" && input.action !== "entrar" && input.action !== "trocar-senha") return json({ error: "Solicitação inválida." }, 400);
 
   const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
   const { password } = input;
   if (email.length > 254 || /[\u0000-\u001f\u007f]/u.test(email) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)
-      || typeof password !== "string" || password.length < 12 || password.length > 256) {
+      || !validPassword(password)) {
     return json({ error: "Informe um e-mail válido e uma senha de 12 a 256 caracteres." }, 400);
   }
 
@@ -60,17 +60,39 @@ export async function POST(request: Request) {
     if (!created) return json({ error: "Já existe uma conta para este e-mail ou navegador. Use Entrar." }, 409);
     setPhotographerSession(result, site.origin, session.token);
   } else {
-    const [account] = await db.select({ id: photographers.id, passwordHash: photographers.passwordHash, passwordSalt: photographers.passwordSalt })
+    const [account] = await db.select({ id: photographers.id, passwordHash: photographers.passwordHash,
+      passwordSalt: photographers.passwordSalt, mustChangePassword: photographers.mustChangePassword })
       .from(photographers).where(eq(photographers.email, email));
-    if (!account || !await matchesPassword(password, account)) return json({ error: "E-mail ou senha incorretos." }, 401);
+    const invalid = () => json({ error: "E-mail ou senha incorretos." }, 401);
+    if (!account || !await matchesPassword(password, account)) return invalid();
+    if (account.mustChangePassword && input.action !== "trocar-senha") {
+      const required = json({ changeRequired: true }, 428);
+      setPhotographerSession(required, site.origin, "");
+      return required;
+    }
+    let replacement: Awaited<ReturnType<typeof passwordCredentials>> | null = null;
+    if (input.action === "trocar-senha") {
+      if (!account.mustChangePassword) return invalid();
+      if (!validPassword(input.newPassword) || input.newPassword === password) {
+        return json({ error: "Escolha uma senha nova, diferente da temporária, com 12 a 256 caracteres." }, 400);
+      }
+      replacement = await passwordCredentials(input.newPassword);
+    }
     const session = newPhotographerSession(account.id);
-    await db.transaction(async (tx) => {
+    const valid = await db.transaction(async (tx) => {
+      const [current] = await tx.select({ id: photographers.id }).from(photographers).where(and(
+        eq(photographers.id, account.id), eq(photographers.passwordHash, account.passwordHash),
+      )).for("update");
+      if (!current) return false;
+      if (replacement) await tx.update(photographers).set({ ...replacement, mustChangePassword: false }).where(eq(photographers.id, account.id));
       await tx.delete(photographerSessions).where(and(
         eq(photographerSessions.photographerId, account.id), lte(photographerSessions.expiresAt, new Date()),
       ));
       if (previous) await tx.delete(photographerSessions).where(eq(photographerSessions.tokenHash, previous));
       await tx.insert(photographerSessions).values(session.data);
+      return true;
     });
+    if (!valid) return invalid();
     setPhotographerSession(result, site.origin, session.token);
   }
   clearTeamInvite(result, site.origin);

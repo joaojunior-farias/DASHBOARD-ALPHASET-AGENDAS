@@ -5,6 +5,7 @@ import * as calendar from "./calendar.js";
 import * as photographers from "./photographers.js";
 import * as session from "./session.js";
 import * as users from "./users.js";
+import * as profile from "./profile.js";
 import { closeDb } from "./db/index.js";
 
 const token = process.env.API_SERVICE_TOKEN;
@@ -33,6 +34,7 @@ const routes = new Map<string, { GET?: Handler; POST?: Handler }>([
   ["/api/fotografos", photographers],
   ["/api/sessao", session],
   ["/api/usuarios", users],
+  ["/api/perfil", profile],
 ]);
 
 const server = serve({

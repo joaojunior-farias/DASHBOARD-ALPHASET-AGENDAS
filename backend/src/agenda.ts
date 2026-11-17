@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { getDb } from "./db/index.js";
-import { calendarEvents, calendarOptions, events, responses } from "./db/schema.js";
+import { calendarEvents, calendarOptions, events, responses, manualPhotographerAssignments, photographers } from "./db/schema.js";
 import { adminCookie, validAdminSession } from "./server/admin-session.js";
 import { acceptsJson, loginRequired, requestSite } from "./server/config.js";
 import { type EventDetails, isDistanceList, PERIODS, SPORTS, timePattern, uuidPattern, validDate } from "./agenda-model.js";
@@ -10,7 +10,7 @@ import { readCookie } from "./server/cookies.js";
 import { signedInPhotographer } from "./server/photographer-session.js";
 import { ensureInvite } from "./server/team-invite.js";
 
-const responseFields = { name: responses.name, available: responses.available, selection: responses.selection };
+const responseFields = { name: responses.name, available: responses.available, selection: responses.selection, assignedByAdmin: responses.assignedByAdmin };
 const adminResponseFields = { id: responses.id, ...responseFields };
 type AdminReply = Pick<typeof responses.$inferSelect, keyof typeof adminResponseFields>;
 
@@ -35,7 +35,7 @@ function cleanName(value: unknown) {
 
 function selectionVersion(replies: AdminReply[]) {
   // Changes to the candidates or their decisions invalidate a selection already open on screen.
-  const candidates = replies.filter((reply) => reply.available).map(({ id, selection }) => `${id}:${selection ?? ""}`).sort();
+  const candidates = replies.filter((reply) => reply.available || reply.assignedByAdmin).map(({ id, selection }) => `${id}:${selection ?? ""}`).sort();
   return createHash("sha256").update(candidates.join("\n")).digest("hex");
 }
 
@@ -57,18 +57,26 @@ export async function GET(request: Request) {
   const site = requestSite(request.headers);
   if (!site) return error("Página indisponível.", 404);
   if (site.kind === "dashboard") {
-    if (!validAdminSession(readCookie(request, adminCookie))) {
+    if (!await validAdminSession(readCookie(request, adminCookie))) {
       return error(loginRequired(site.kind), 401);
     }
-    const rows = await getDb().select({ event: events, reply: adminResponseFields }).from(events)
-      .leftJoin(responses, and(eq(responses.eventId, events.id), eq(responses.dateRevision, events.dateRevision)))
-      .orderBy(asc(events.date), asc(events.time), asc(events.id), asc(responses.name));
-    const grouped = new Map<string, typeof events.$inferSelect & { replies: AdminReply[] }>();
-    for (const { event, reply } of rows) {
-      const entry = grouped.get(event.id) ?? { ...event, replies: [] };
-      if (reply) entry.replies.push(reply);
+    const db = getDb();
+    const [rows, manual] = await Promise.all([
+      db.select({ event: events, reply: adminResponseFields, accountId: photographers.id }).from(events)
+        .leftJoin(responses, and(eq(responses.eventId, events.id), eq(responses.dateRevision, events.dateRevision)))
+        .leftJoin(photographers, eq(responses.participantId, photographers.id))
+        .orderBy(asc(events.date), asc(events.time), asc(events.id), asc(responses.name)),
+      db.select({ id: manualPhotographerAssignments.id, eventId: manualPhotographerAssignments.eventId, name: manualPhotographerAssignments.name })
+        .from(manualPhotographerAssignments).innerJoin(events, and(eq(events.id, manualPhotographerAssignments.eventId),
+          eq(events.dateRevision, manualPhotographerAssignments.dateRevision))).orderBy(asc(manualPhotographerAssignments.name)),
+    ]);
+    const grouped = new Map<string, typeof events.$inferSelect & { replies: (AdminReply & { accountId: string | null })[]; manual: { id: string; name: string }[] }>();
+    for (const { event, reply, accountId } of rows) {
+      const entry = grouped.get(event.id) ?? { ...event, replies: [], manual: [] };
+      if (reply) entry.replies.push({ ...reply, accountId });
       grouped.set(event.id, entry);
     }
+    for (const { id, eventId, name } of manual) grouped.get(eventId)?.manual.push({ id, name });
     const invite = new URL(site.agenda);
     invite.hash = "convite=" + await ensureInvite();
     return json({ events: [...grouped.values()].map((event) => ({ ...event, selectionVersion: selectionVersion(event.replies) })), invite: invite.href });
@@ -89,7 +97,7 @@ export async function GET(request: Request) {
     .orderBy(asc(events.date), asc(events.time));
   return json({ events: rows.map(({ event, reply }) => ({
     ...event,
-    reply: reply?.dateRevision === event.dateRevision ? { name: reply.name, available: reply.available, selection: reply.selection } : null,
+    reply: reply?.dateRevision === event.dateRevision ? { name: reply.name, available: reply.available, selection: reply.selection, assignedByAdmin: reply.assignedByAdmin } : null,
     needsReconfirmation: reply !== null && reply.dateRevision !== event.dateRevision,
   })) });
 }
@@ -130,8 +138,8 @@ export async function POST(request: Request) {
         .onConflictDoUpdate({
           target: [responses.eventId, responses.participantId],
           set: {
-            name, available, dateRevision,
-            selection: available ? sql`case when ${responses.dateRevision} = ${dateRevision} and ${responses.available} then ${responses.selection} end` : null,
+            name, available, dateRevision, assignedByAdmin: false,
+            selection: available ? sql`case when ${responses.dateRevision} = ${dateRevision} and (${responses.available} or ${responses.assignedByAdmin}) then ${responses.selection} end` : null,
           },
         }).returning(responseFields);
       return json({ reply });
@@ -139,11 +147,12 @@ export async function POST(request: Request) {
   }
 
   if (site.kind !== "dashboard") return error("Solicitação inválida.", 404);
-  if (!validAdminSession(readCookie(request, adminCookie))) {
+  if (!await validAdminSession(readCookie(request, adminCookie))) {
     return error(loginRequired(site.kind), 401);
   }
   const { action, eventId, dateRevision = 1 } = input;
   const db = getDb();
+  if (action === "assign" || action === "remove-manual" || action === "unassign") return changeClosedTeam(input, action);
   if (action === "create" || action === "create-draft" || action === "create-calendar-card" || action === "update") {
     const details = eventDetails(input);
     if (!details) return error("Confira os dados do evento. As distâncias devem ser maiores que zero.", 400);
@@ -186,10 +195,11 @@ export async function POST(request: Request) {
       return error("Confira a seleção de fotógrafos.", 400);
     }
     return db.transaction(async (tx) => {
-      const [event] = await tx.select({ dateRevision: events.dateRevision })
+      const [event] = await tx.select({ dateRevision: events.dateRevision, closed: events.closed })
         .from(events).where(eq(events.id, eventId)).for("no key update");
       if (!event) return error("Este evento foi removido da agenda.", 404);
-      const candidateFilter = and(eq(responses.eventId, eventId), eq(responses.dateRevision, dateRevision), sql`${responses.available}`);
+      if (event.closed) return error("O card foi encerrado. Abra a escala para editar a equipe.", 409);
+      const candidateFilter = and(eq(responses.eventId, eventId), eq(responses.dateRevision, dateRevision), or(eq(responses.available, true), eq(responses.assignedByAdmin, true)));
       const candidates = await tx.select(adminResponseFields).from(responses).where(candidateFilter);
       if (event.dateRevision !== dateRevision || selectionVersion(candidates) !== version) {
         return error("As inscrições ou a seleção mudaram. Reabra a seleção para ver a lista atual.", 409);
@@ -205,14 +215,17 @@ export async function POST(request: Request) {
       return json({ replies, selectionVersion: selectionVersion(replies) });
     }, { isolationLevel: "read committed" });
   }
-  if (action === "publish" || action === "unpublish") {
+  if (action === "publish" || action === "unpublish" || action === "close" || action === "reopen") {
     if (typeof eventId !== "string" || !uuidPattern.test(eventId)) return error("Evento inválido.", 400);
     const published = action === "publish";
+    const closed = action === "close" ? true : action === "reopen" ? false : undefined;
     const [event] = await db.update(events).set({
-      published, hasBeenPublished: published ? true : sql`${events.hasBeenPublished} OR ${events.published}`,
-    }).where(eq(events.id, eventId))
-      .returning({ id: events.id });
-    return event ? json({ ok: true }) : error("Este evento foi excluído.", 404);
+      published, closed, hasBeenPublished: published ? true : sql`${events.hasBeenPublished} OR ${events.published}`,
+    }).where(and(eq(events.id, eventId), published ? eq(events.closed, false) : undefined))
+      .returning({ id: events.id, published: events.published, closed: events.closed });
+    if (event) return json({ event });
+    const [existing] = await db.select({ id: events.id }).from(events).where(eq(events.id, eventId));
+    return existing ? error("Reabra o card antes de publicar.", 409) : error("Este evento foi excluído.", 404);
   }
   if (action === "remove") {
     if (typeof eventId !== "string" || !uuidPattern.test(eventId)) return error("Evento inválido.", 400);
@@ -221,4 +234,41 @@ export async function POST(request: Request) {
     return json({ ok: true });
   }
   return error("Solicitação inválida.", 400);
+}
+
+async function changeClosedTeam(input: Record<string, unknown>, action: "assign" | "remove-manual" | "unassign") {
+  const { eventId, dateRevision, photographerId, assignmentId } = input;
+  const name = cleanName(input.name);
+  if (typeof eventId !== "string" || !uuidPattern.test(eventId) || !isPositiveInteger(dateRevision)) {
+    return error("Evento inválido.", 400);
+  }
+  const accountId = typeof photographerId === "string" && uuidPattern.test(photographerId) ? photographerId : null;
+  const manualId = typeof assignmentId === "string" && uuidPattern.test(assignmentId) ? assignmentId : null;
+  if ((action !== "assign" && !manualId)
+    || (action === "assign" && !accountId && (name.length < 2 || name.length > 80 || /[\u0000-\u001f\u007f]/u.test(name)))) {
+    return error("Selecione um fotógrafo ou informe um nome de 2 a 80 caracteres.", 400);
+  }
+  return getDb().transaction(async (tx) => {
+    const [event] = await tx.select({ closed: events.closed, dateRevision: events.dateRevision })
+      .from(events).where(eq(events.id, eventId)).for("no key update");
+    if (!event) return error("Este evento foi excluído.", 404);
+    if (!event.closed || event.dateRevision !== dateRevision) return error("Atualize a escala de um card encerrado na data atual.", 409);
+    if (action === "remove-manual" && manualId) {
+      await tx.delete(manualPhotographerAssignments).where(and(eq(manualPhotographerAssignments.id, manualId),
+        eq(manualPhotographerAssignments.eventId, eventId), eq(manualPhotographerAssignments.dateRevision, dateRevision)));
+    } else if (action === "unassign" && manualId) {
+      await tx.update(responses).set({ selection: "declined" }).where(and(eq(responses.eventId, eventId),
+        eq(responses.id, manualId), eq(responses.dateRevision, dateRevision), eq(responses.selection, "confirmed")));
+    } else if (accountId) {
+      const [photo] = await tx.select({ id: photographers.id, name: photographers.name }).from(photographers).where(eq(photographers.id, accountId));
+      if (!photo) return error("Fotógrafo não encontrado.", 404);
+      await tx.insert(responses).values({ eventId, participantId: photo.id, name: photo.name, available: false, dateRevision, selection: "confirmed", assignedByAdmin: true })
+        .onConflictDoUpdate({ target: [responses.eventId, responses.participantId],
+          set: { name: photo.name, available: sql`${responses.dateRevision} = ${dateRevision} and ${responses.available}`,
+            dateRevision, selection: "confirmed", assignedByAdmin: true } });
+    } else {
+      await tx.insert(manualPhotographerAssignments).values({ eventId, dateRevision, name }).onConflictDoNothing();
+    }
+    return json({ ok: true });
+  });
 }

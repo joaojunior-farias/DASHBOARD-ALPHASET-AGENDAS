@@ -1,5 +1,5 @@
-.work-calendar h1 { margin: 0; font-size: clamp(28px, 5vw, 42px); letter-spacing: -.05em; }
-.calendar-views { margin-top: 15px; margin-bottom: 22px; }
+.work-calendar h1 { margin: 0 0 18px; font-size: clamp(28px, 5vw, 42px); letter-spacing: -.05em; }
+.calendar-month-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .calendar-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .calendar-toolbar h2 { margin: 0; font-size: clamp(21px, 3.5vw, 29px); letter-spacing: -.04em; }
 .calendar-toolbar .button:disabled { cursor: default; }
@@ -44,7 +44,7 @@
 .calendar-catalog-select select { flex: 1; min-width: 0; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--ink); font-size: 16px; }
 .calendar-color-dot { flex: 0 0 12px; height: 12px; border-radius: 50%; background: var(--slot-color); }
 
-@media (max-width: 740px) {
+@media (max-width: 1000px) {
   .calendar-day { min-height: 55px; padding: 0; }
   .calendar-date { align-items: center; padding: 3px 1px; }
   .calendar-day.booked .calendar-date { bottom: 0; height: auto; }

@@ -1,52 +1,34 @@
 "use client";
 
-import { type FormEvent, useRef, useState } from "react";
+import { useState } from "react";
+import { apiRequest, PasswordChangeFields, readNewPassword, RequestError, useSubmit } from "../agenda-ui";
 
 export function LoginForm() {
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const pending = useRef(false);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (pending.current) return;
-    const fields = new FormData(event.currentTarget);
-    const username = fields.get("username");
-    const password = fields.get("password");
-    pending.current = true;
-    setBusy(true);
-    setError("");
-    try {
-      const response = await fetch("/api/sessao", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-      if (response.ok) {
-        window.location.replace("/");
-        return;
-      }
-      setError(response.status === 401 ? "Usuário ou senha incorretos." : "Não foi possível entrar. Tente novamente.");
-    } catch {
-      setError("Não foi possível entrar. Tente novamente.");
-    }
-    pending.current = false;
-    setBusy(false);
-  }
-
+  const [temporary, setTemporary] = useState<{ username: FormDataEntryValue | null; password: FormDataEntryValue | null } | null>(null);
+  const { busy, error, submit } = useSubmit();
   return (
-    <form method="post" onSubmit={(event) => void submit(event)}>
-      <div className="form-fields">
-        <label>Usuário
-          <input autoFocus name="username" autoComplete="username" autoCapitalize="none" required maxLength={80} />
-        </label>
-        <label>Senha
-          <input name="password" type="password" autoComplete="current-password" required maxLength={256} />
-        </label>
-      </div>
+    <form method="post" onSubmit={(event) => void submit(event, async (fields) => {
+      const credentials = { username: fields.get("username"), password: fields.get("password") };
+      try {
+        await apiRequest(temporary ? { ...temporary, action: "trocar-senha", newPassword: readNewPassword(fields) } : credentials, "/api/sessao");
+      } catch (cause) {
+        if (!temporary && cause instanceof RequestError && cause.status === 428) {
+          setTemporary(credentials);
+          return;
+        }
+        throw cause;
+      }
+      setTemporary(null);
+      window.location.replace("/");
+    })}>
+      {temporary ? <PasswordChangeFields /> : <div className="form-fields">
+        <label>Usuário<input autoFocus name="username" autoComplete="username" autoCapitalize="none" required maxLength={80} /></label>
+        <label>Senha<input name="password" type="password" autoComplete="current-password" required maxLength={256} /></label>
+      </div>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="dialog-actions">
-        <button className="button primary" disabled={busy}>{busy ? "Entrando…" : "Entrar"}</button>
+        {temporary && <button className="button outline" type="button" disabled={busy} onClick={() => setTemporary(null)}>Voltar</button>}
+        <button className="button primary" disabled={busy}>{busy ? "Aguarde…" : temporary ? "Salvar senha e entrar" : "Entrar"}</button>
       </div>
     </form>
   );

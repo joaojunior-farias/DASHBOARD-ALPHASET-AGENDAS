@@ -14,10 +14,10 @@ export type EventDetails = {
   location: string;
 };
 export type AgendaEvent = Omit<EventDetails, "location"> & { id: string; location: string | null; dateRevision: number; published: boolean };
-export type Reply = { name: string; available: boolean; selection: "confirmed" | "declined" | null };
-export type AdminReply = Reply & { id: string };
+export type Reply = { name: string; available: boolean; assignedByAdmin?: boolean; selection: "confirmed" | "declined" | null };
+export type AdminReply = Reply & { id: string; accountId: string | null };
 export type PhotographerEvent = AgendaEvent & { reply: Reply | null; needsReconfirmation: boolean };
-export type AdminEvent = AgendaEvent & { hasBeenPublished: boolean; replies: AdminReply[]; selectionVersion?: string };
+export type AdminEvent = AgendaEvent & { hasBeenPublished: boolean; closed: boolean; replies: AdminReply[]; manual: { id: string; name: string }[]; selectionVersion?: string };
 export type PhotographerAgenda = { events: PhotographerEvent[] };
 export type AdminAgenda = { events: AdminEvent[]; invite: string };
 

@@ -10,6 +10,10 @@ agenda.alpha7studio.com.br ───┘
 
 O dashboard pede usuário e senha antes de mostrar eventos e respostas. A conta master cria usuários do painel. Os fotógrafos podem criar conta com nome, e-mail e senha diretamente na página da agenda. Depois, entram com e-mail e senha. As respostas ficam na conta, inclusive as anteriores quando o cadastro é feito no navegador que ainda tem o convite original salvo.
 
+Em **Gestão da equipe**, use **Encerrar** para fechar as inscrições e manter o card em lilás no dashboard. Em **Montar escala**, selecione uma conta de fotógrafo ou adicione o nome de quem ainda não tem cadastro. Fotógrafos cadastrados recebem a confirmação em **Minhas respostas**. Nomes digitados ficam na escala do dashboard.
+
+Em **Usuários**, a conta master pode resetar senhas de operadores e fotógrafos. Defina `USER_RESET_PASSWORD` no backend com 12 a 256 caracteres. Ao resetar, as sessões anteriores são encerradas e, no próximo login, a pessoa precisa usar a senha temporária e cadastrar uma senha própria.
+
 O **Calendário** do dashboard é a agenda interna de trabalho. A aba **Configurações** permite cadastrar categorias, modalidades, status com cores e tipos de trabalho. Em eventos esportivos, **Salvar e criar card** abre um rascunho na agenda da equipe com os dados do calendário preenchidos. O card aparece para os fotógrafos após a publicação na agenda da equipe.
 
 Rascunhos aparecem no dashboard. Ao publicar, o evento entra na lista de quem ainda precisa responder. Despublicar encerra as inscrições e mantém o evento no histórico de quem já respondeu. As respostas podem ser alteradas enquanto o evento estiver publicado.

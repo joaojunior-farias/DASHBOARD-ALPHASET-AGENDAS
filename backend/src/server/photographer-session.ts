@@ -34,6 +34,6 @@ export async function signedInPhotographer(request: Request) {
   const [account] = await getDb().select({ id: photographers.id, name: photographers.name })
     .from(photographerSessions)
     .innerJoin(photographers, eq(photographers.id, photographerSessions.photographerId))
-    .where(and(eq(photographerSessions.tokenHash, hash), gt(photographerSessions.expiresAt, new Date())));
+    .where(and(eq(photographerSessions.tokenHash, hash), gt(photographerSessions.expiresAt, new Date()), eq(photographers.mustChangePassword, false)));
   return account ?? null;
 }

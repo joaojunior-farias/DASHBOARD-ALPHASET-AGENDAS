@@ -1,9 +1,11 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, CalendarDays, Check, Plus, Settings } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { apiRequest, Dialog, DistanceFields, EventForm, LogoutButton, readDistances, RequestError, TeamMark, useSubmit } from "../agenda";
+import { DashboardShell } from "../dashboard-shell";
+import { DistanceFields, EventForm, readDistances } from "../agenda";
+import { apiRequest, Dialog, RequestError, useSubmit } from "../agenda-ui";
 import { describeDate, monthLabel, shiftMonth, suggestedPeriod, today, type EventDetails, type Sport } from "../agenda-model";
 
 const colorLabels = { gray: "Cinza", blue: "Azul", orange: "Laranja", green: "Verde", purple: "Roxo", red: "Vermelho" } as const;
@@ -39,10 +41,9 @@ function datesInGrid(month: string) {
   });
 }
 
-export function WorkCalendar() {
+export function WorkCalendar({ settings, statusId }: { settings: boolean; statusId?: string }) {
   const currentDate = today();
   const [month, setMonth] = useState(() => currentDate.slice(0, 7));
-  const [settings, setSettings] = useState(false);
   const [loaded, setLoaded] = useState<(CalendarData & { month: string }) | null>(null);
   const [reload, setReload] = useState(0);
   const [error, setError] = useState("");
@@ -71,7 +72,11 @@ export function WorkCalendar() {
 
   const options = loaded?.options ?? [];
   const byId = new Map(options.map((option) => [option.id, option]));
-  const monthEvents = loaded?.month === month ? loaded.events : [];
+  const statusOptions = loaded?.options.filter((option) => option.kind === "status");
+  const activeStatus = statusOptions?.find((option) => option.id === statusId);
+  const monthEvents = loaded?.month === month
+    ? loaded.events.filter((event) => !statusId || event.statusId === statusId)
+    : [];
   const byDate = new Map<string, CalendarEvent[]>();
   for (const event of monthEvents) {
     const day = byDate.get(event.date) ?? [];
@@ -129,22 +134,9 @@ export function WorkCalendar() {
   }
 
   return (
-    <div className="site">
-      <header className="topbar">
-        <div className="topbar-inner">
-          <TeamMark />
-          <div className="top-actions">
-            <Link className="button outline" href="/"><ArrowLeft size={16} /> Agenda da equipe</Link>
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
+    <DashboardShell area={settings ? "settings" : "calendar"} statusId={statusId} statuses={statusOptions}>
       <main className="main work-calendar">
         <h1>{settings ? "Configurações do calendário" : "Calendário de trabalho"}</h1>
-        <div className="agenda-views calendar-views" role="group" aria-label="Seções do calendário">
-          <button className="button outline" aria-pressed={!settings} onClick={() => setSettings(false)}><CalendarDays size={17} /> Calendário</button>
-          <button className="button outline" aria-pressed={settings} onClick={() => setSettings(true)}><Settings size={17} /> Configurações</button>
-        </div>
         {error && <p className="form-error" role="alert">{error} <button className="text-button" onClick={() => setReload((value) => value + 1)}>Tentar novamente</button></p>}
         {settings ? (loaded && (
           <div className="calendar-settings">
@@ -153,7 +145,10 @@ export function WorkCalendar() {
         )) : (
           <section aria-labelledby="calendar-month">
             <div className="calendar-toolbar">
-              <h2 id="calendar-month">{monthLabel(month)}</h2>
+              <div className="calendar-month-heading">
+                <h2 id="calendar-month">{monthLabel(month)}</h2>
+                {activeStatus && <span className="calendar-tag" data-color={activeStatus.color}>{activeStatus.name}</span>}
+              </div>
               <div className="month-actions">
                 <button className="button outline" aria-label="Mês anterior" disabled={month === "2000-01"} onClick={() => selectMonth(shiftMonth(month, -1))}><ArrowLeft size={17} /></button>
                 <button className="button outline" onClick={() => selectMonth(currentDate.slice(0, 7))}>Hoje</button>
@@ -211,7 +206,7 @@ export function WorkCalendar() {
               <div className="dialog-actions"><button className="button primary" onClick={() => newEvent(panel.date)}><Plus size={17} /> Novo evento</button></div>
             </>
           )}
-          {panel.kind === "editor" && <CalendarEditor key={panel.id} editor={panel} options={options} save={(values, card) => saveEvent(panel, values, card)} />}
+          {panel.kind === "editor" && <CalendarEditor key={panel.id} editor={panel} options={options} statusId={activeStatus?.id} save={(values, card) => saveEvent(panel, values, card)} />}
           {panel.kind === "card" && <EventForm month={month} save={(values) => saveCard(panel.event, values)} defaults={{
             name: panel.event.name, date: panel.event.date, time: panel.event.time, period: suggestedPeriod(panel.event.time),
             location: panel.event.location, distancesKm: panel.event.distancesKm,
@@ -220,12 +215,12 @@ export function WorkCalendar() {
         </Dialog>
       )}
       {notice && <div className="toast" role="status"><Check size={18} />{notice}</div>}
-    </div>
+    </DashboardShell>
   );
 }
 
-function CalendarEditor({ editor, options, save }: {
-  editor: Editor; options: CalendarOption[]; save: (values: Record<string, unknown>, card: boolean) => Promise<void>;
+function CalendarEditor({ editor, options, statusId, save }: {
+  editor: Editor; statusId?: string; options: CalendarOption[]; save: (values: Record<string, unknown>, card: boolean) => Promise<void>;
 }) {
   const existing = editor.event;
   const [categoryId, setCategoryId] = useState(existing?.categoryId ?? "");
@@ -264,7 +259,7 @@ function CalendarEditor({ editor, options, save }: {
           </select></label>
         </div>
         <div className="field-row">
-          <label>Status<select name="statusId" required defaultValue={existing?.statusId ?? statuses.find((option) => option.code === "quote")?.id}>
+          <label>Status<select name="statusId" required defaultValue={existing?.statusId ?? statusId ?? statuses.find((option) => option.code === "quote")?.id}>
             {statuses.map(({ id, name }) => <option value={id} key={id}>{name}</option>)}
           </select></label>
           <label>Tipo de trabalho<select name="workTypeId" required defaultValue={existing?.workTypeId ?? workTypes.find((option) => option.code === "photo")?.id}>

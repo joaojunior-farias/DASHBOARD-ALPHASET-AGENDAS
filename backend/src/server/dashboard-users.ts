@@ -18,6 +18,8 @@ export async function authenticateDashboardUser(usernameKey: string, password: s
     id: dashboardUsers.id,
     passwordSalt: dashboardUsers.passwordSalt,
     passwordHash: dashboardUsers.passwordHash,
+    passwordVersion: dashboardUsers.passwordVersion,
+    mustChangePassword: dashboardUsers.mustChangePassword,
   }).from(dashboardUsers).where(eq(dashboardUsers.usernameKey, usernameKey)).limit(1);
-  return account && await matchesPassword(password, account) ? account.id : null;
+  return account && await matchesPassword(password, account) ? account : null;
 }

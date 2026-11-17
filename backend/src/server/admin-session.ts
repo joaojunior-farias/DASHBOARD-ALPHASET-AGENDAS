@@ -1,9 +1,13 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { and, eq } from "drizzle-orm";
+import { uuidPattern } from "../agenda-model.js";
+import { getDb } from "../db/index.js";
+import { dashboardUsers } from "../db/schema.js";
 
 export const adminCookie = "alpha_set_admin";
 export const adminSessionSeconds = 60 * 60 * 8;
 
-export type AdminSession = { role: "master"; subject: "master" } | { role: "operator"; subject: string };
+export type AdminSession = { role: "master"; subject: "master" } | { role: "operator"; subject: string; version: number };
 
 export function masterUsername() {
   return process.env.ADMIN_USERNAME?.trim() || "AlphaSetStudio";
@@ -41,23 +45,36 @@ function signature(payload: string, role: AdminSession["role"]) {
 
 export function newAdminSession(session: AdminSession) {
   const expires = Math.floor(Date.now() / 1000) + adminSessionSeconds;
-  const payload = ["2", session.role, session.subject, expires, randomBytes(16).toString("hex")].join(".");
+  const identity = session.role === "master" ? ["2", session.role, session.subject] : ["3", session.role, session.subject, session.version];
+  const payload = [...identity, expires, randomBytes(16).toString("hex")].join(".");
   return payload + "." + signature(payload, session.role).toString("hex");
 }
 
-export function readAdminSession(token: string | undefined): AdminSession | null {
-  const match = token?.match(/^2\.(master|operator)\.(master|[a-f0-9-]{36})\.(\d{1,12})\.([a-f0-9]{32})\.([a-f0-9]{64})$/);
-  if (!match) return null;
-  const [, role, subject, expires, nonce, mac] = match;
+function readAdminSession(token: string | undefined): AdminSession | null {
+  const parts = token?.split(".") ?? [];
+  const [format, role, subject] = parts;
+  if (!((format === "2" && parts.length === 6) || (format === "3" && parts.length === 7))) return null;
+  const [expires, nonce, mac] = parts.slice(-3);
+  if (!/^\d{1,12}$/.test(expires) || !/^[a-f0-9]{32}$/.test(nonce) || !/^[a-f0-9]{64}$/.test(mac)) return null;
   if (Number(expires) <= Math.floor(Date.now() / 1000)) return null;
-  const session: AdminSession | null = role === "master" && subject === "master"
+  const version = format === "2" ? 1 : Number(parts[3]);
+  const session: AdminSession | null = format === "2" && role === "master" && subject === "master"
     ? { role, subject }
-    : role === "operator" && subject !== "master" ? { role, subject } : null;
+    : role === "operator" && uuidPattern.test(subject) && Number.isInteger(version) && version > 0 ? { role, subject, version } : null;
   if (!session) return null;
-  const payload = ["2", role, subject, expires, nonce].join(".");
+  const payload = parts.slice(0, -1).join(".");
   return timingSafeEqual(Buffer.from(mac, "hex"), signature(payload, session.role)) ? session : null;
 }
 
-export function validAdminSession(token: string | undefined) {
-  return readAdminSession(token) !== null;
+export async function activeAdminSession(token: string | undefined) {
+  const session = readAdminSession(token);
+  if (session?.role !== "operator") return session;
+  const [account] = await getDb().select({ id: dashboardUsers.id }).from(dashboardUsers).where(and(
+    eq(dashboardUsers.id, session.subject), eq(dashboardUsers.passwordVersion, session.version), eq(dashboardUsers.mustChangePassword, false),
+  ));
+  return account ? session : null;
+}
+
+export async function validAdminSession(token: string | undefined) {
+  return (await activeAdminSession(token)) !== null;
 }
