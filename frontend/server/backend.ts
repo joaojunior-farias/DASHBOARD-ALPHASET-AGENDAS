@@ -1,6 +1,6 @@
 import { requestSite } from "./config";
 
-type Endpoint = "/api/agenda" | "/api/sessao" | "/api/usuarios";
+type Endpoint = "/api/agenda" | "/api/sessao" | "/api/usuarios" | "/api/fotografos";
 type HeadersReader = Pick<Headers, "get">;
 
 function proxyError(message: string, status: number) {
@@ -32,7 +32,8 @@ async function readBody(request: Request) {
 
 export async function callBackend(incoming: HeadersReader, endpoint: Endpoint, body?: string) {
   const site = requestSite(incoming);
-  if (!site || (endpoint !== "/api/agenda" && site.kind !== "dashboard")) {
+  const allowedSite = endpoint === "/api/fotografos" ? "agenda" : "dashboard";
+  if (!site || (endpoint !== "/api/agenda" && site.kind !== allowedSite)) {
     return proxyError("Página indisponível.", 404);
   }
 

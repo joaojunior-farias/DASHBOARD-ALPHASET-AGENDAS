@@ -8,7 +8,9 @@ dashboard.alpha7studio.com.br ─┐
 agenda.alpha7studio.com.br ───┘
 ```
 
-O dashboard pede usuário e senha antes de mostrar eventos e respostas. A conta master cria usuários do painel. A agenda abre pelo convite dos fotógrafos. A localização aparece no card e na tela de resposta.
+O dashboard pede usuário e senha antes de mostrar eventos e respostas. A conta master cria usuários do painel. O primeiro acesso dos fotógrafos começa pelo convite da equipe, com cadastro de nome, e-mail e senha. Depois, o fotógrafo entra com e-mail e senha. As respostas ficam na conta, inclusive as anteriores quando o cadastro é feito no mesmo navegador que ainda tem o convite original.
+
+Rascunhos aparecem no dashboard. Ao publicar, o evento entra na lista de quem ainda precisa responder. Despublicar encerra as inscrições e mantém o evento no histórico de quem já respondeu. As respostas podem ser alteradas enquanto o evento estiver publicado.
 
 ## Configurar no Railway
 

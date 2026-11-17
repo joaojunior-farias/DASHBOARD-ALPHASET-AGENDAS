@@ -1,16 +1,15 @@
-import { randomBytes, randomUUID } from "node:crypto";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, asc, eq, isNotNull, or, sql } from "drizzle-orm";
 import { getDb } from "./db/index.js";
-import { events, responses, settings } from "./db/schema.js";
+import { events, responses } from "./db/schema.js";
 import { adminCookie, validAdminSession } from "./server/admin-session.js";
-import { acceptsJson, cookieOptions, loginRequired, requestSite } from "./server/config.js";
+import { acceptsJson, loginRequired, requestSite } from "./server/config.js";
 import { type EventDetails, PERIODS, SPORTS, validDate } from "./agenda-model.js";
 
-import { readCookie, writeCookie } from "./server/cookies.js";
+import { readCookie } from "./server/cookies.js";
+import { signedInPhotographer } from "./server/photographer-session.js";
+import { ensureInvite, invitedParticipant } from "./server/team-invite.js";
 
-const inviteKey = "team-invite";
-const sessionCookie = "alpha_set_equipe";
-const tokenPattern = /^[a-f0-9]{64}$/;
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const responseFields = { name: responses.name, available: responses.available };
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -47,33 +46,6 @@ function eventDetails(input: Record<string, unknown>): EventDetails | null {
   return { name, date, time, meetingTime, period, sport, location };
 }
 
-async function findInvite() {
-  const [row] = await getDb().select({ value: settings.value }).from(settings)
-    .where(eq(settings.key, inviteKey));
-  return row?.value;
-}
-
-async function ensureInvite() {
-  const original = await findInvite();
-  if (original) return original;
-  const value = randomBytes(32).toString("hex");
-  const [created] = await getDb().insert(settings).values({ key: inviteKey, value })
-    .onConflictDoNothing().returning({ value: settings.value });
-  const invite = created?.value ?? await findInvite();
-  if (!invite) throw new Error("Falha ao carregar o convite da equipe.");
-  return invite;
-}
-
-function sessionParts(request: Request) {
-  const [token, id] = (readCookie(request, sessionCookie) ?? "").split(".");
-  return tokenPattern.test(token) && uuidPattern.test(id) ? { token, id } : null;
-}
-
-async function participantId(request: Request) {
-  const session = sessionParts(request);
-  return session && session.token === await findInvite() ? session.id : null;
-}
-
 export async function GET(request: Request) {
   const site = requestSite(request.headers);
   if (!site) return error("Página indisponível.", 404);
@@ -95,14 +67,17 @@ export async function GET(request: Request) {
     return json({ events: [...grouped.values()], invite: invite.href });
   }
 
-  const id = await participantId(request);
-  if (!id) return error(loginRequired(site.kind), 401);
+  const account = await signedInPhotographer(request);
+  if (!account) {
+    return json({ error: loginRequired(site.kind), canRegister: Boolean(await invitedParticipant(request)) }, 401);
+  }
   const rows = await getDb().select({
-    event: events,
+    event: { id: events.id, name: events.name, date: events.date, time: events.time, meetingTime: events.meetingTime,
+      period: events.period, sport: events.sport, location: events.location, published: events.published, dateRevision: events.dateRevision },
     reply: { ...responseFields, dateRevision: responses.dateRevision },
   }).from(events)
-    .leftJoin(responses, and(eq(responses.eventId, events.id), eq(responses.participantId, id)))
-    .where(eq(events.published, true))
+    .leftJoin(responses, and(eq(responses.eventId, events.id), eq(responses.participantId, account.id)))
+    .where(or(eq(events.published, true), isNotNull(responses.participantId)))
     .orderBy(asc(events.date), asc(events.time));
   return json({ events: rows.map(({ event, reply }) => ({
     ...event,
@@ -126,26 +101,13 @@ export async function POST(request: Request) {
     return error("Dados inválidos.", 400);
   }
 
-  if (site.kind === "agenda" && input.action === "join") {
-    const { token } = input;
-    if (typeof token !== "string" || !tokenPattern.test(token) || token !== await findInvite()) {
-      return error("Este convite é inválido. Peça o link da agenda à Alpha Set.", 403);
-    }
-    const previous = sessionParts(request);
-    const id = previous?.token === token ? previous.id : randomUUID();
-    const result = json({ ok: true });
-    writeCookie(result, sessionCookie, token + "." + id, cookieOptions(site.origin, 60 * 60 * 24 * 365));
-    return result;
-  }
-
   if (site.kind === "agenda" && input.action === "reply") {
-    const id = await participantId(request);
-    if (!id) return error("Abra o link de convite para enviar sua resposta.", 401);
-    const name = cleanName(input.name);
+    const account = await signedInPhotographer(request);
+    if (!account) return error(loginRequired(site.kind), 401);
+    const { id, name } = account;
     const { eventId, available, dateRevision = 1 } = input;
-    if (name.length < 2 || name.length > 80 || typeof available !== "boolean"
-      || typeof eventId !== "string" || !uuidPattern.test(eventId)) {
-      return error("Confira seu nome e a opção de disponibilidade.", 400);
+    if (typeof available !== "boolean" || typeof eventId !== "string" || !uuidPattern.test(eventId)) {
+      return error("Confira a opção de disponibilidade.", 400);
     }
     if (!isDateRevision(dateRevision)) return error("Atualize a agenda antes de responder.", 400);
     return getDb().transaction(async (tx) => {
@@ -190,9 +152,12 @@ export async function POST(request: Request) {
       ? error("A data do evento mudou. Reabra o evento para editar a versão atual.", 409)
       : error("Este evento foi removido da agenda.", 404);
   }
-  if (action === "publish") {
+  if (action === "publish" || action === "unpublish") {
     if (typeof eventId !== "string" || !uuidPattern.test(eventId)) return error("Evento inválido.", 400);
-    const [event] = await db.update(events).set({ published: true }).where(eq(events.id, eventId))
+    const published = action === "publish";
+    const [event] = await db.update(events).set({
+      published, hasBeenPublished: published ? true : sql`${events.hasBeenPublished} OR ${events.published}`,
+    }).where(eq(events.id, eventId))
       .returning({ id: events.id });
     return event ? json({ ok: true }) : error("Este evento foi excluído.", 404);
   }

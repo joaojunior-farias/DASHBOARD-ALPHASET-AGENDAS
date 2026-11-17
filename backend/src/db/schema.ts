@@ -1,4 +1,4 @@
-import { boolean, date, index, integer, pgTable, primaryKey, text, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, index, integer, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { Period, Sport } from "../agenda-model.js";
 
 export const events = pgTable("events", {
@@ -8,6 +8,7 @@ export const events = pgTable("events", {
   time: text("time").notNull(),
   meetingTime: text("meeting_time"),
   published: boolean("published").notNull().default(false),
+  hasBeenPublished: boolean("has_been_published").notNull().default(false),
   period: text("period").$type<Period>().notNull(),
   sport: text("sport").$type<Sport>().notNull(),
   location: text("location"),
@@ -33,3 +34,17 @@ export const dashboardUsers = pgTable("dashboard_users", {
   passwordSalt: text("password_salt").notNull(),
   passwordHash: text("password_hash").notNull(),
 });
+
+export const photographers = pgTable("photographers", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  passwordSalt: text("password_salt").notNull(),
+  passwordHash: text("password_hash").notNull(),
+});
+
+export const photographerSessions = pgTable("photographer_sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  photographerId: uuid("photographer_id").notNull().references(() => photographers.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => [index("photographer_sessions_account_expiry").on(table.photographerId, table.expiresAt)]);

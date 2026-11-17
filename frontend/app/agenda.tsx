@@ -12,6 +12,8 @@ import {
 } from "./agenda-model";
 
 type Mode = "admin" | "photographer";
+type PhotoView = "pending" | "history";
+type AnswerFilter = "all" | "available" | "unavailable";
 type Panel =
   | { kind: "event"; event?: AdminEvent }
   | { kind: "replies"; eventId: string }
@@ -24,12 +26,12 @@ const sportIcons = { Bike, Corrida: Footprints, Trilha: Mountain, Outro: Calenda
 const sportStyles = { Bike: "bike", Corrida: "run", Trilha: "trail", Outro: "other" };
 
 class RequestError extends Error {
-  constructor(message: string, public status: number) { super(message); }
+  constructor(message: string, public status: number, public canRegister = false) { super(message); }
 }
 
 async function apiRequest<T>(
   input?: Record<string, unknown>,
-  endpoint: "/api/agenda" | "/api/usuarios" = "/api/agenda",
+  endpoint: "/api/agenda" | "/api/usuarios" | "/api/fotografos" = "/api/agenda",
 ) {
   const response = await fetch(endpoint, input ? {
     method: "POST",
@@ -38,9 +40,9 @@ async function apiRequest<T>(
   } : { cache: "no-store" });
   const result: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const message = result && typeof result === "object" && "error" in result && typeof result.error === "string"
-      ? result.error : "A agenda está indisponível. Tente novamente.";
-    throw new RequestError(message, response.status);
+    const data = result && typeof result === "object" ? result as Record<string, unknown> : {};
+    const message = typeof data.error === "string" ? data.error : "A agenda está indisponível. Tente novamente.";
+    throw new RequestError(message, response.status, data.canRegister === true);
   }
   return result as T;
 }
@@ -69,17 +71,20 @@ function EventMetadata({ event, showYear = false }: { event: AgendaEvent; showYe
   );
 }
 
-function EventCard({ event, onReplies, onEdit, onRemove, onPublish, onReply }: {
+function EventCard({ event, showYear, onReplies, onEdit, onRemove, onPublish, onReply }: {
   event: AdminEvent | PhotographerEvent;
+  showYear: boolean;
   onReplies: (eventId: string) => void;
   onEdit: (event: AdminEvent) => void;
   onRemove: (event: AdminEvent) => void;
-  onPublish: (eventId: string) => Promise<void>;
+  onPublish: (eventId: string, published: boolean) => Promise<void>;
   onReply: (event: PhotographerEvent, available?: boolean) => void;
 }) {
   const { weekday } = describeDate(event.date);
   const admin = "replies" in event;
   const available = admin ? event.replies.filter((reply) => reply.available).length : 0;
+  const published = event.published !== false;
+  const hasBeenPublished = admin && (published || event.hasBeenPublished);
   return (
     <article className="event-card">
       <div className="card-top">
@@ -90,32 +95,36 @@ function EventCard({ event, onReplies, onEdit, onRemove, onPublish, onReply }: {
         <SportTag sport={event.sport} />
       </div>
       <h3>{event.name}</h3>
-      <EventMetadata event={event} />
+      <EventMetadata event={event} showYear={showYear} />
       {admin ? (
         <div className="card-bottom">
-          {event.published === false ? (
-            <PublishEventForm publish={() => onPublish(event.id)} />
-          ) : (
+          <PublicationForm published={published} hasBeenPublished={hasBeenPublished} save={() => onPublish(event.id, !published)} />
+          {hasBeenPublished && (
             <div className="card-counts">
               <span className="count available"><Check size={15} /> {available} <span>disponíveis</span></span>
               <span className="count unavailable"><X size={15} /> {event.replies.length - available} <span>indisponíveis</span></span>
             </div>
           )}
           <div className="event-admin-actions">
-            {event.published !== false && <button className="button outline full" onClick={() => onReplies(event.id)}>Ver respostas <ArrowRight size={17} /></button>}
+            {hasBeenPublished && <button className="button outline full" onClick={() => onReplies(event.id)}>Ver respostas <ArrowRight size={17} /></button>}
             <button className="button outline" aria-label="Editar evento" onClick={() => onEdit(event)}><Pencil size={16} />Editar</button>
             <button className="button outline danger-light" aria-label="Excluir evento" onClick={() => onRemove(event)}><Trash2 size={16} />Excluir</button>
           </div>
         </div>
       ) : (
         <div className="card-bottom">
-          {event.reply && <p className="sent" role="status"><Check size={16} /> Resposta enviada · {event.reply.available ? "Disponível" : "Indisponível"}</p>}
-          {event.needsReconfirmation ? (
+          {event.reply && <p className={event.reply.available ? "sent" : "sent sent-unavailable"} role="status">
+            {event.reply.available ? <Check size={16} /> : <X size={16} />}{event.reply.available ? "Disponível" : "Indisponível"}
+          </p>}
+          {!published && <p className="closed-status">Inscrições encerradas{event.needsReconfirmation && " · Data alterada"}</p>}
+          {published && event.needsReconfirmation && (
             <>
               <p className="date-alert"><CalendarDays size={16} /> A data mudou. Responda para a nova data.</p>
               <button className="button primary full" onClick={() => onReply(event)}>Reconfirmar disponibilidade <ArrowRight size={17} /></button>
             </>
-          ) : (
+          )}
+          {published && event.reply && <button className="button outline" onClick={() => onReply(event)}><Pencil size={16} />Alterar resposta</button>}
+          {published && !event.reply && !event.needsReconfirmation && (
             <div className="response-buttons">
               <button className="button yes" onClick={() => onReply(event, true)}><Check size={16} />Estou disponível</button>
               <button className="button outline no" onClick={() => onReply(event, false)}><X size={16} />Não estou disponível</button>
@@ -131,6 +140,10 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
   const admin = mode === "admin";
   const [adminData, setAdminData] = useState<AdminAgenda | null>(null);
   const [photoEvents, setPhotoEvents] = useState<PhotographerEvent[] | null>(null);
+  const [photoView, setPhotoView] = useState<PhotoView>("pending");
+  const [answerFilter, setAnswerFilter] = useState<AnswerFilter>("all");
+  const [creatingAccount, setCreatingAccount] = useState(false);
+  const [inviteError, setInviteError] = useState("");
   const [month, setMonth] = useState(() => today().slice(0, 7));
   const [loadError, setLoadError] = useState<RequestError | null>(null);
   const [reload, setReload] = useState(0);
@@ -153,8 +166,14 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
         } else {
           const token = new URLSearchParams(window.location.hash.slice(1)).get("convite");
           if (token) {
-            await apiRequest({ action: "join", token });
-            window.history.replaceState(null, "", window.location.pathname + window.location.search);
+            try {
+              await apiRequest({ action: "convite", token }, "/api/fotografos");
+              if (isCurrent()) setInviteError("");
+            } catch (cause) {
+              if (!(cause instanceof RequestError) || cause.status !== 403) throw cause;
+              if (isCurrent()) setInviteError(cause.message);
+            }
+            if (isCurrent()) window.history.replaceState(null, "", window.location.pathname + window.location.search);
           }
           const data = await apiRequest<PhotographerAgenda>();
           if (isCurrent()) setPhotoEvents(data.events);
@@ -166,6 +185,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
           if (error.status === 401 || error.status === 403) {
             setAdminData(null);
             setPhotoEvents(null);
+            setPanel(null);
           }
           setLoadError(error);
         }
@@ -188,22 +208,27 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  const events = admin ? adminData?.events : photoEvents;
-  const entries = events?.filter((event) => event.date.startsWith(month)) ?? [];
+  const history = !admin && photoView === "history";
+  const pendingEvents = photoEvents?.filter((event) => event.published && !event.reply);
+  const events = admin ? adminData?.events : pendingEvents;
+  const historyEntries = photoEvents?.filter((event) => event.reply || !event.published).reverse() ?? [];
+  const entries = history
+    ? historyEntries.filter((event) => answerFilter === "all" || event.reply?.available === (answerFilter === "available"))
+    : events?.filter((event) => event.date.startsWith(month)) ?? [];
   const nextEvent = events?.find((event) => event.date.slice(0, 7) > month);
   const before = events?.findLast((event) => event.date.slice(0, 7) < month);
   const alternateMonth = (nextEvent ?? before)?.date.slice(0, 7);
   const currentMonth = today().slice(0, 7);
   const photoMonths = [...new Set([
-    currentMonth, shiftMonth(currentMonth, 1), month, ...(photoEvents ?? []).map((event) => event.date.slice(0, 7)),
+    currentMonth, shiftMonth(currentMonth, 1), month, ...(pendingEvents ?? []).map((event) => event.date.slice(0, 7)),
   ])].sort();
   const selected = panel?.kind === "replies" ? adminData?.events.find((event) => event.id === panel.eventId) : undefined;
   const invite = adminData?.invite ?? "";
-  const reconfirmationsElsewhere = photoEvents?.filter((event) => event.needsReconfirmation && !event.date.startsWith(month)) ?? [];
+  const reconfirmationsElsewhere = pendingEvents?.filter((event) => event.needsReconfirmation && !event.date.startsWith(month)) ?? [];
   const replyEvent = panel?.kind === "reply" ? photoEvents?.find((event) => event.id === panel.event.id) : undefined;
   const canStart = Boolean(events);
   const showSignIn = admin && loadError?.status === 401;
-  const showInviteGate = !admin && (loadError?.status === 401 || loadError?.status === 403);
+  const showTeamAccess = !admin && loadError?.status === 401;
 
   function finish(message: string, closePanel = true) {
     version.current += 1;
@@ -233,22 +258,23 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
   }
 
   function refreshOnConflict(cause: unknown): never {
-    if (cause instanceof RequestError && (cause.status === 409 || cause.status === 404)) {
+    if (cause instanceof RequestError && [401, 404, 409].includes(cause.status)) {
       setReload((count) => count + 1);
     }
     throw cause;
   }
 
-  async function saveReply(event: PhotographerEvent, name: string, available: boolean) {
+  async function saveReply(event: PhotographerEvent, available: boolean) {
     const { reply } = await apiRequest<{ reply: Reply }>({
-      action: "reply", eventId: event.id, dateRevision: event.dateRevision, name, available,
+      action: "reply", eventId: event.id, dateRevision: event.dateRevision, available,
     }).catch(refreshOnConflict);
     setPhotoEvents((events) => events?.map((item) =>
       item.id === event.id && item.dateRevision === event.dateRevision
         ? { ...item, reply, needsReconfirmation: false } : item
     ) ?? null);
     setMonth(event.date.slice(0, 7));
-    try { localStorage.setItem("alpha-set-nome", reply.name); } catch { /* The reply is already saved. */ }
+    setPhotoView("history");
+    setAnswerFilter("all");
     finish("Disponibilidade enviada para a Alpha Set.");
   }
 
@@ -264,13 +290,13 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
     finish("Evento excluído.");
   }
 
-  async function publishEvent(id: string) {
-    await apiRequest({ action: "publish", eventId: id }).catch(refreshOnConflict);
+  async function publishEvent(id: string, published: boolean) {
+    await apiRequest({ action: published ? "publish" : "unpublish", eventId: id }).catch(refreshOnConflict);
     setAdminData((data) => data && {
       ...data,
-      events: data.events.map((event) => event.id === id ? { ...event, published: true } : event),
+      events: data.events.map((event) => event.id === id ? { ...event, published, hasBeenPublished: true } : event),
     });
-    finish("Evento publicado na agenda da equipe.", false);
+    finish(published ? "Evento publicado na agenda da equipe." : "Evento despublicado. Inscrições encerradas.", false);
   }
 
   return (
@@ -284,7 +310,12 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
               {canStart && <button className="button outline invite-button" onClick={() => setPanel({ kind: "invite" })}><Link2 size={17} /> <span>Link da equipe</span></button>}
               {canStart && <LogoutButton />}
             </div>
-          ) : <span className="role"><Users size={16} /> Equipe</span>}
+          ) : (
+            <div className="top-actions">
+              <span className="role"><Users size={16} /> Equipe</span>
+              {canStart && <LogoutButton photographer />}
+            </div>
+          )}
         </div>
       </header>
 
@@ -297,7 +328,14 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
           </div>
         </section>
 
-        {reconfirmationsElsewhere.length > 0 && (
+        {!admin && canStart && (
+          <div className="agenda-views" role="group" aria-label="Seções da agenda">
+            <button className="button outline" aria-pressed={!history} onClick={() => setPhotoView("pending")}><CalendarDays size={17} /> Para responder</button>
+            <button className="button outline" aria-pressed={history} onClick={() => setPhotoView("history")}><Check size={17} /> Minhas respostas</button>
+          </div>
+        )}
+
+        {!history && reconfirmationsElsewhere.length > 0 && (
           <section className="reconfirm-section" aria-labelledby="reconfirm-title">
             <h2 id="reconfirm-title">Eventos com nova data</h2>
             <ul>
@@ -315,14 +353,20 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
         )}
 
         {canStart ? (
-          <section className="month-section" aria-label="Eventos por mês">
+          <section className="month-section" aria-label={history ? "Histórico de respostas" : "Eventos por mês"}>
             <div className="month-header">
               <div className="month-heading">
-                <h2>{monthLabel(month)}</h2>
+                <h2>{history ? "Histórico" : monthLabel(month)}</h2>
                 <span className="event-total">{entries.length} {entries.length === 1 ? "evento" : "eventos"}</span>
               </div>
               <div className="month-actions">
-                <div className="month-nav" role="group" aria-label="Navegação mensal">
+                {history ? (
+                  <div className="month-nav answer-filters" role="group" aria-label="Filtrar por disponibilidade">
+                    <button className="button outline" aria-pressed={answerFilter === "all"} onClick={() => setAnswerFilter("all")}>Todas</button>
+                    <button className="button outline" aria-pressed={answerFilter === "available"} onClick={() => setAnswerFilter("available")}>Disponível</button>
+                    <button className="button outline" aria-pressed={answerFilter === "unavailable"} onClick={() => setAnswerFilter("unavailable")}>Indisponível</button>
+                  </div>
+                ) : <div className="month-nav" role="group" aria-label="Navegação mensal">
                   {admin ? (
                     <>
                       <button className="button outline" onClick={() => setMonth(shiftMonth(month, -1))}>Mês anterior</button>
@@ -334,7 +378,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
                       {monthLabel(option, option.slice(0, 4) !== currentMonth.slice(0, 4))}
                     </button>
                   ))}
-                </div>
+                </div>}
                 {canManageUsers && <button className="button outline" onClick={() => setPanel({ kind: "user" })}><Users size={17} /> Criar usuário</button>}
                 {admin && <button className="button primary" onClick={() => setPanel({ kind: "event" })}><Plus size={19} /> Novo evento</button>}
               </div>
@@ -342,7 +386,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
             {loadError && <p className="form-error" role="alert">{loadError.message} <button className="text-button" onClick={() => setReload(reload + 1)}>Atualizar</button></p>}
             {entries.length ? (
               <div className="event-grid">
-                {entries.map((event) => <EventCard key={event.id} event={event}
+                {entries.map((event) => <EventCard key={event.id} event={event} showYear={history}
                   onReplies={(eventId) => setPanel({ kind: "replies", eventId })}
                   onEdit={(event) => setPanel({ kind: "event", event })}
                   onRemove={(event) => setPanel({ kind: "remove", event })}
@@ -352,21 +396,36 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
             ) : (
               <div className="empty">
                 <div className="empty-icon"><CalendarDays size={26} /></div>
-                <h3>Nenhum evento neste mês</h3>
-                <p>{admin ? "Os eventos cadastrados para este mês aparecem aqui." : "Quando a Alpha Set cadastrar um evento para este mês, ele aparece aqui."}</p>
+                <h3>{history ? "Nenhuma resposta neste filtro" : admin ? "Nenhum evento neste mês" : "Nenhum evento para responder neste mês"}</h3>
                 {admin && alternateMonth && <button className="button outline" onClick={() => setMonth(alternateMonth)}>
                   {monthLabel(alternateMonth)} <ArrowRight size={17} />
                 </button>}
               </div>
             )}
           </section>
+        ) : showTeamAccess ? (
+          <section className="login-card team-access" aria-labelledby="team-access-title">
+            <h2 id="team-access-title">{creatingAccount && loadError.canRegister ? "Criar conta" : "Entrar na agenda"}</h2>
+            {inviteError && <p className="form-error" role="alert">{inviteError}</p>}
+            <TeamAccessForm key={creatingAccount && loadError.canRegister ? "register" : "login"}
+              creating={creatingAccount && loadError.canRegister} signedIn={() => {
+                version.current += 1;
+                setCreatingAccount(false);
+                setInviteError("");
+                setLoadError(null);
+                setReload((value) => value + 1);
+              }} />
+            {loadError.canRegister
+              ? <button className="text-button team-access-switch" onClick={() => setCreatingAccount(!creatingAccount)}>{creatingAccount ? "Já tenho conta" : "Criar conta com este convite"}</button>
+              : <p className="dialog-subtitle">Primeiro acesso? Abra o convite da Alpha Set para criar sua conta.</p>}
+          </section>
         ) : (
           <section className="empty gate" aria-live="polite">
             <div className="empty-icon">{admin ? <Shield size={25} /> : <CalendarDays size={25} />}</div>
-            <h2>{showInviteGate ? "Abra seu convite" : showSignIn ? "Acesse o painel" : loadError ? "Agenda indisponível" : "Carregando a agenda"}</h2>
+            <h2>{showSignIn ? "Acesse o painel" : loadError ? "Agenda indisponível" : "Carregando a agenda"}</h2>
             {loadError && <p>{loadError.message}</p>}
             {showSignIn && <a className="button primary" href="/entrar">Entrar no painel <ArrowRight size={18} /></a>}
-            {loadError && !showSignIn && !showInviteGate && <button className="button outline" onClick={() => { setLoadError(null); setReload(reload + 1); }}>Tentar novamente</button>}
+            {loadError && !showSignIn && <button className="button outline" onClick={() => { setLoadError(null); setReload(reload + 1); }}>Tentar novamente</button>}
           </section>
         )}
 
@@ -392,11 +451,11 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
             </div>
           )}
           {panel.kind === "replies" && !selected && <h2 id="dialog-title">Evento removido</h2>}
-          {panel.kind === "reply" && (replyEvent ? (
+          {panel.kind === "reply" && (replyEvent?.published ? (
             <ResponseForm key={replyEvent.dateRevision} event={replyEvent}
               available={replyEvent.dateRevision === panel.event.dateRevision ? panel.available : undefined}
-              save={(name, available) => saveReply(replyEvent, name, available)} />
-          ) : <h2 id="dialog-title">Evento removido</h2>)}
+              save={(available) => saveReply(replyEvent, available)} cancel={() => setPanel(null)} />
+          ) : <h2 id="dialog-title">Inscrições indisponíveis</h2>)}
           {panel.kind === "invite" && <InviteForm invite={invite} />}
           {panel.kind === "user" && canManageUsers && <CreateUserForm save={saveUser} />}
           {panel.kind === "remove" && <ConfirmRemove event={panel.event} remove={() => removeEvent(panel.event.id)}
@@ -408,7 +467,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
   );
 }
 
-function LogoutButton() {
+function LogoutButton({ photographer = false }: { photographer?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
 
@@ -416,13 +475,13 @@ function LogoutButton() {
     setBusy(true);
     setError(false);
     try {
-      const response = await fetch("/api/sessao", {
+      const response = await fetch(photographer ? "/api/fotografos" : "/api/sessao", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "sair" }),
       });
       if (!response.ok) throw new Error();
-      window.location.assign("/entrar");
+      window.location.assign(photographer ? "/" : "/entrar");
     } catch {
       setBusy(false);
       setError(true);
@@ -431,7 +490,7 @@ function LogoutButton() {
 
   return (
     <>
-      <button className="button icon outline" aria-label="Sair do painel" title="Sair do painel" disabled={busy} onClick={() => void logout()}>
+      <button className="button icon outline" aria-label={photographer ? "Sair da agenda" : "Sair do painel"} disabled={busy} onClick={() => void logout()}>
         <LogOut size={17} />
       </button>
       {error && <div className="toast" role="alert">Não foi possível sair. Tente novamente.</div>}
@@ -499,15 +558,39 @@ function CreateUserForm({ save }: { save: (username: string, password: string) =
   );
 }
 
-function PublishEventForm({ publish }: { publish: () => Promise<void> }) {
+function PublicationForm({ published, hasBeenPublished, save }: { published: boolean; hasBeenPublished: boolean; save: () => Promise<void> }) {
   const { busy, error, submit } = useSubmit();
+  const action = published ? "Despublicar" : "Publicar";
   return (
-    <form className="publish-event" method="post" onSubmit={(event) => void submit(event, publish)}>
+    <form className="publish-event" method="post" onSubmit={(event) => void submit(event, save)}>
       <div className="publish-event-actions">
-        <span className="event-total">Rascunho</span>
-        <button className="button primary" disabled={busy}>{busy ? "Publicando…" : "Publicar"}</button>
+        <span className="event-total">{published ? "Publicado" : hasBeenPublished ? "Despublicado" : "Rascunho"}</span>
+        <button className={published ? "button outline" : "button primary"} disabled={busy}>{busy ? "Salvando…" : action}</button>
       </div>
       {error && <p className="form-error" role="alert">{error}</p>}
+    </form>
+  );
+}
+
+function TeamAccessForm({ creating, signedIn }: { creating: boolean; signedIn: () => void }) {
+  const { busy, error, submit } = useSubmit();
+  return (
+    <form method="post" onSubmit={(event) => void submit(event, async (fields) => {
+      await apiRequest({
+        action: creating ? "cadastro" : "entrar",
+        name: fields.get("name"), email: fields.get("email"), password: fields.get("password"),
+      }, "/api/fotografos");
+      signedIn();
+    })}>
+      <div className="form-fields">
+        {creating && <label>Nome completo<input name="name" autoComplete="name" required minLength={2} maxLength={80} /></label>}
+        <label>E-mail<input name="email" type="email" autoComplete="username" autoCapitalize="none" required maxLength={254} /></label>
+        <label>Senha<input name="password" type="password" autoComplete={creating ? "new-password" : "current-password"}
+          required minLength={creating ? 12 : undefined} maxLength={256} /></label>
+        {creating && <small className="password-hint">Use pelo menos 12 caracteres.</small>}
+      </div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="dialog-actions"><button className="button primary" disabled={busy}>{busy ? "Aguarde…" : creating ? "Criar conta" : "Entrar"}</button></div>
     </form>
   );
 }
@@ -554,41 +637,41 @@ function EventForm({ existing, month, save }: { existing?: AdminEvent; month: st
   );
 }
 
-function ResponseForm({ event, available, save }: {
+function ResponseForm({ event, available, save, cancel }: {
   event: PhotographerEvent;
   available?: boolean;
-  save: (name: string, available: boolean) => Promise<void>;
+  save: (available: boolean) => Promise<void>;
+  cancel: () => void;
 }) {
   const { busy, error, submit } = useSubmit();
-  const [defaultName] = useState(() => {
-    if (event.reply?.name) return event.reply.name;
-    try { return localStorage.getItem("alpha-set-nome") ?? ""; } catch { return ""; }
-  });
+  const question = available === undefined ? "Confirme sua disponibilidade para este evento."
+    : available ? "Confirma que está disponível para este evento?" : "Confirma que não está disponível para este evento?";
   return (
     <form method="post" onSubmit={(submission) => void submit(submission, (values) => {
       const chosen = values.get("available");
       if (available === undefined && chosen !== "yes" && chosen !== "no") {
         throw new RequestError("Escolha uma opção de disponibilidade.", 400);
       }
-      return save(String(values.get("name")), available ?? (chosen === "yes"));
+      return save(available ?? (chosen === "yes"));
     })}>
       {available !== undefined && (
         <span className={"count " + (available ? "available" : "unavailable")}>{available ? <Check size={16} /> : <X size={16} />}{available ? "Estou disponível" : "Não estou disponível"}</span>
       )}
       <h2 id="dialog-title">{event.name}</h2>
       <EventMetadata event={event} showYear />
-      <div className="form-fields">
-        <label>Seu nome<input autoFocus name="name" autoComplete="name" defaultValue={defaultName} minLength={2} maxLength={80} required placeholder="Nome e sobrenome" /></label>
-      </div>
+      <p className="dialog-subtitle">{question}</p>
       {available === undefined && (
         <fieldset className="reconfirm-options">
-          <legend>Disponibilidade para a nova data</legend>
-          <label><input type="radio" name="available" value="yes" required /> Estou disponível</label>
-          <label><input type="radio" name="available" value="no" required /> Não estou disponível</label>
+          <legend>{event.needsReconfirmation ? "Disponibilidade para a nova data" : "Sua resposta"}</legend>
+          <label><input type="radio" name="available" value="yes" defaultChecked={event.reply?.available === true} required /> Estou disponível</label>
+          <label><input type="radio" name="available" value="no" defaultChecked={event.reply?.available === false} required /> Não estou disponível</label>
         </fieldset>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="dialog-actions"><button className="button primary" disabled={busy}>{busy ? "Enviando…" : available === undefined ? "Reconfirmar" : "Enviar resposta"} <ArrowRight size={18} /></button></div>
+      <div className="dialog-actions">
+        <button type="button" className="button outline" disabled={busy} onClick={cancel}>Cancelar</button>
+        <button className="button primary" disabled={busy}>{busy ? "Enviando…" : "Confirmar"} <Check size={18} /></button>
+      </div>
     </form>
   );
 }

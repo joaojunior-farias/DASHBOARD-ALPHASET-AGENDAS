@@ -37,5 +37,5 @@ export function cookieOptions(origin: URL, maxAge: number) {
 }
 
 export function loginRequired(site: Site) {
-  return site === "dashboard" ? "Entre com sua senha para abrir o painel." : "Abra o link de convite enviado pela Alpha Set.";
+  return site === "dashboard" ? "Entre com sua senha para abrir o painel." : "Entre com seu e-mail e senha para abrir a agenda.";
 }

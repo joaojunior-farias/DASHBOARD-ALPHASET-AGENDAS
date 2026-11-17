@@ -12,10 +12,10 @@ export type EventDetails = {
   sport: Sport;
   location: string;
 };
-export type AgendaEvent = Omit<EventDetails, "location"> & { id: string; location: string | null; dateRevision: number };
+export type AgendaEvent = Omit<EventDetails, "location"> & { id: string; location: string | null; dateRevision: number; published: boolean };
 export type Reply = { name: string; available: boolean };
 export type PhotographerEvent = AgendaEvent & { reply: Reply | null; needsReconfirmation: boolean };
-export type AdminEvent = AgendaEvent & { published: boolean; replies: Reply[] };
+export type AdminEvent = AgendaEvent & { hasBeenPublished: boolean; replies: Reply[] };
 export type PhotographerAgenda = { events: PhotographerEvent[] };
 export type AdminAgenda = { events: AdminEvent[]; invite: string };
 
