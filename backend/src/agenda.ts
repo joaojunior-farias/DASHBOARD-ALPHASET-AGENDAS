@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, isNotNull, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, or, sql } from "drizzle-orm";
 import { getDb } from "./db/index.js";
 import { events, responses } from "./db/schema.js";
 import { adminCookie, validAdminSession } from "./server/admin-session.js";
@@ -25,7 +25,7 @@ function error(message: string, status: number) {
   return json({ error: message }, status);
 }
 
-function isDateRevision(value: unknown): value is number {
+function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 2_147_483_647;
 }
 
@@ -33,17 +33,23 @@ function cleanName(value: unknown) {
   return typeof value === "string" ? value.trim().replace(/\s+/gu, " ") : "";
 }
 
+function isDistanceList(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every((km) => typeof km === "number" && Number.isFinite(km) && km > 0);
+}
+
 function eventDetails(input: Record<string, unknown>): EventDetails | null {
   const name = cleanName(input.name);
   const location = cleanName(input.location);
-  const { date, time, meetingTime } = input;
+  const { date, time, meetingTime, photographerLimit, distancesKm } = input;
   const period = PERIODS.find((value) => value === input.period);
   const sport = SPORTS.find((value) => value === input.sport);
   if (name.length < 2 || name.length > 100 || typeof date !== "string" || !validDate(date)
     || typeof time !== "string" || !timePattern.test(time)
     || (meetingTime != null && (typeof meetingTime !== "string" || !timePattern.test(meetingTime)))
+    || (photographerLimit != null && !isPositiveInteger(photographerLimit))
+    || (distancesKm !== undefined && !isDistanceList(distancesKm))
     || location.length < 2 || location.length > 160 || !period || !sport) return null;
-  return { name, date, time, meetingTime, period, sport, location };
+  return { name, date, time, meetingTime, period, sport, location, photographerLimit, distancesKm: sport === "Corrida" ? distancesKm : [] };
 }
 
 export async function GET(request: Request) {
@@ -73,14 +79,20 @@ export async function GET(request: Request) {
   }
   const rows = await getDb().select({
     event: { id: events.id, name: events.name, date: events.date, time: events.time, meetingTime: events.meetingTime,
-      period: events.period, sport: events.sport, location: events.location, published: events.published, dateRevision: events.dateRevision },
+      period: events.period, sport: events.sport, location: events.location, published: events.published, dateRevision: events.dateRevision,
+      photographerLimit: events.photographerLimit, distancesKm: events.distancesKm },
     reply: { ...responseFields, dateRevision: responses.dateRevision },
+    confirmedCount: sql<number>`case when ${events.photographerLimit} is null then 0 else (
+      select count(*)::int from ${responses}
+      where ${responses.eventId} = ${events.id} and ${responses.dateRevision} = ${events.dateRevision} and ${responses.available}
+    ) end`,
   }).from(events)
     .leftJoin(responses, and(eq(responses.eventId, events.id), eq(responses.participantId, account.id)))
     .where(or(eq(events.published, true), isNotNull(responses.participantId)))
     .orderBy(asc(events.date), asc(events.time));
-  return json({ events: rows.map(({ event, reply }) => ({
+  return json({ events: rows.map(({ event, reply, confirmedCount }) => ({
     ...event,
+    confirmedCount,
     reply: reply?.dateRevision === event.dateRevision ? { name: reply.name, available: reply.available } : null,
     needsReconfirmation: reply !== null && reply.dateRevision !== event.dateRevision,
   })) });
@@ -109,13 +121,26 @@ export async function POST(request: Request) {
     if (typeof available !== "boolean" || typeof eventId !== "string" || !uuidPattern.test(eventId)) {
       return error("Confira a opção de disponibilidade.", 400);
     }
-    if (!isDateRevision(dateRevision)) return error("Atualize a agenda antes de responder.", 400);
+    if (!isPositiveInteger(dateRevision)) return error("Atualize a agenda antes de responder.", 400);
     return getDb().transaction(async (tx) => {
-      const [event] = await tx.select({ dateRevision: events.dateRevision })
-        .from(events).where(and(eq(events.id, eventId), eq(events.published, true))).for("share");
+      const [event] = await tx.select({ dateRevision: events.dateRevision, photographerLimit: events.photographerLimit })
+        .from(events).where(and(eq(events.id, eventId), eq(events.published, true))).for("no key update");
       if (!event) return error("Este evento não está disponível na agenda.", 404);
       if (event.dateRevision !== dateRevision) {
         return error("A data do evento mudou. Confira a nova data antes de responder.", 409);
+      }
+
+      let confirmedCount = 0;
+      if (event.photographerLimit !== null) {
+        // Count in a separate statement after locking the event so concurrent replies share the same capacity.
+        const [{ total, alreadyConfirmed }] = await tx.select({
+          total: count(),
+          alreadyConfirmed: sql<boolean>`coalesce(bool_or(${responses.participantId} = ${id}::uuid), false)`,
+        }).from(responses).where(and(eq(responses.eventId, eventId), eq(responses.dateRevision, dateRevision), sql`${responses.available}`));
+        if (total >= event.photographerLimit && !alreadyConfirmed) {
+          return error("As vagas para este evento já foram preenchidas.", 409);
+        }
+        confirmedCount = total + Number(available) - Number(alreadyConfirmed);
       }
 
       await tx.insert(responses).values({ eventId, participantId: id, name, available, dateRevision })
@@ -123,8 +148,8 @@ export async function POST(request: Request) {
           target: [responses.eventId, responses.participantId],
           set: { name, available, dateRevision },
         });
-      return json({ reply: { name, available } });
-    });
+      return json({ reply: { name, available }, confirmedCount });
+    }, { isolationLevel: "read committed" });
   }
 
   if (site.kind !== "dashboard") return error("Solicitação inválida.", 404);
@@ -135,13 +160,13 @@ export async function POST(request: Request) {
   const db = getDb();
   if (action === "create" || action === "create-draft" || action === "update") {
     const details = eventDetails(input);
-    if (!details) return error("Confira o nome, a data, os horários, a localização, o período e a modalidade.", 400);
+    if (!details) return error("Confira os dados do evento. O limite deve ser um número inteiro positivo e as distâncias devem ser maiores que zero.", 400);
     if (action !== "update") {
       const [event] = await db.insert(events).values({ id: randomUUID(), ...details }).returning();
       return json({ event }, 201);
     }
     if (typeof eventId !== "string" || !uuidPattern.test(eventId)) return error("Evento inválido.", 400);
-    if (!isDateRevision(dateRevision)) return error("Atualize a agenda antes de editar.", 400);
+    if (!isPositiveInteger(dateRevision)) return error("Atualize a agenda antes de editar.", 400);
     const [updated] = await db.update(events).set({
       ...details,
       dateRevision: sql`case when ${events.date} <> ${details.date}::date then ${events.dateRevision} + 1 else ${events.dateRevision} end`,

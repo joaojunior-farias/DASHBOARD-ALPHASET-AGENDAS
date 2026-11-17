@@ -8,16 +8,26 @@ export type EventDetails = {
   date: string;
   time: string;
   meetingTime: string | null;
+  photographerLimit: number | null;
+  distancesKm: number[];
   period: Period;
   sport: Sport;
   location: string;
 };
 export type AgendaEvent = Omit<EventDetails, "location"> & { id: string; location: string | null; dateRevision: number; published: boolean };
 export type Reply = { name: string; available: boolean };
-export type PhotographerEvent = AgendaEvent & { reply: Reply | null; needsReconfirmation: boolean };
+export type PhotographerEvent = AgendaEvent & { reply: Reply | null; needsReconfirmation: boolean; confirmedCount: number };
 export type AdminEvent = AgendaEvent & { hasBeenPublished: boolean; replies: Reply[] };
 export type PhotographerAgenda = { events: PhotographerEvent[] };
 export type AdminAgenda = { events: AdminEvent[]; invite: string };
+
+export function hasFullCapacity(limit: number | null, confirmedCount: number) {
+  return limit != null && confirmedCount >= limit;
+}
+
+export function canReplyToEvent(event: PhotographerEvent) {
+  return event.published && (!hasFullCapacity(event.photographerLimit, event.confirmedCount) || event.reply?.available === true);
+}
 
 const monthFormatter = new Intl.DateTimeFormat("pt-BR", {
   month: "long", year: "numeric", timeZone: "UTC",

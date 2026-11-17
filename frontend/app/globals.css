@@ -183,7 +183,14 @@ svg { flex-shrink: 0; vertical-align: middle; }
   *, *::before, *::after { transition: none !important; }
 }
 
-.event-meta .event-location { width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.event-meta .event-location, .event-meta .event-distances { width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.event-meta .event-distances svg { flex-shrink: 0; }
+.event-capacity { margin: -6px 0 13px; color: var(--muted); font-size: 13px; font-weight: 700; }
+.event-capacity-full { color: var(--orange-strong); }
+.distance-fields { min-width: 0; border: 0; padding: 0; margin: 0; display: grid; justify-items: start; gap: 8px; }
+.distance-fields legend { font-size: 13px; font-weight: 800; padding: 0; margin-bottom: 6px; }
+.distance-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; width: min(100%, 230px); }
+.distance-row span { color: var(--muted); font-size: 13px; font-weight: 700; }
 .login-page { display: grid; align-content: center; max-width: 450px; min-height: 100svh; padding-block: 32px; }
 .login-page .brand { margin-bottom: 26px; }
 .login-card { background: #fff; border: 1px solid var(--line); border-radius: 15px; padding: 22px; }

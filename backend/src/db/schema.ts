@@ -1,4 +1,5 @@
-import { boolean, date, index, integer, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, date, index, integer, numeric, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { Period, Sport } from "../agenda-model.js";
 
 export const events = pgTable("events", {
@@ -7,6 +8,8 @@ export const events = pgTable("events", {
   date: date("date", { mode: "string" }).notNull(),
   time: text("time").notNull(),
   meetingTime: text("meeting_time"),
+  photographerLimit: integer("photographer_limit"),
+  distancesKm: numeric("distances_km", { mode: "number" }).array().notNull().default(sql`'{}'::numeric[]`),
   published: boolean("published").notNull().default(false),
   hasBeenPublished: boolean("has_been_published").notNull().default(false),
   period: text("period").$type<Period>().notNull(),
@@ -21,7 +24,10 @@ export const responses = pgTable("responses", {
   name: text("name").notNull(),
   available: boolean("available").notNull(),
   dateRevision: integer("date_revision").notNull().default(1),
-}, (table) => [primaryKey({ columns: [table.eventId, table.participantId] })]);
+}, (table) => [
+  primaryKey({ columns: [table.eventId, table.participantId] }),
+  index("responses_confirmed_by_event_date").on(table.eventId, table.dateRevision).where(sql`${table.available}`),
+]);
 
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
