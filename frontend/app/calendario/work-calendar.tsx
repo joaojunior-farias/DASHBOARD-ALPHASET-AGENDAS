@@ -3,6 +3,8 @@
 import { ArrowLeft, ArrowRight, Check, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { calendarDays, datesInGrid, eventTimeLabel, weeklyLabel, type CalendarEvent } from "./calendar-model";
+import { ClientPicker } from "./client-picker";
 import { DashboardShell } from "../dashboard-shell";
 import { DistanceFields, EventForm, readDistances } from "../agenda";
 import { apiRequest, Dialog, RequestError, useSubmit } from "../agenda-ui";
@@ -21,25 +23,9 @@ type CalendarOption = {
   id: string; kind: OptionGroup["kind"]; name: string; code: string | null;
   parentId: string | null; color: StatusColor | null; cardSport: Sport | null;
 };
-type CalendarEvent = {
-  id: string; name: string; clientName: string; date: string; time: string; location: string;
-  categoryId: string; modalityId: string | null; statusId: string; workTypeId: string;
-  distancesKm: number[]; version: number; cardId: string | null;
-};
 type Editor = { kind: "editor"; id: string; date: string; event?: CalendarEvent };
 type Panel = Editor | { kind: "day"; date: string } | { kind: "card"; event: CalendarEvent };
 type CalendarData = { options: CalendarOption[]; events: CalendarEvent[] };
-
-function datesInGrid(month: string) {
-  const first = new Date(`${month}-01T12:00:00Z`);
-  const start = new Date(first);
-  start.setUTCDate(first.getUTCDate() - first.getUTCDay());
-  return Array.from({ length: 42 }, (_, index) => {
-    const day = new Date(start);
-    day.setUTCDate(start.getUTCDate() + index);
-    return day.toISOString().slice(0, 10);
-  });
-}
 
 export function WorkCalendar({ settings, statusId }: { settings: boolean; statusId?: string }) {
   const currentDate = today();
@@ -77,12 +63,7 @@ export function WorkCalendar({ settings, statusId }: { settings: boolean; status
   const monthEvents = loaded?.month === month
     ? loaded.events.filter((event) => !statusId || event.statusId === statusId)
     : [];
-  const byDate = new Map<string, CalendarEvent[]>();
-  for (const event of monthEvents) {
-    const day = byDate.get(event.date) ?? [];
-    day.push(event);
-    byDate.set(event.date, day);
-  }
+  const byDate = calendarDays(month, monthEvents);
 
   function selectMonth(value: string) {
     setError("");
@@ -98,7 +79,7 @@ export function WorkCalendar({ settings, statusId }: { settings: boolean; status
   }
 
   async function saveEvent(editor: Editor, details: Record<string, unknown>, makeCard: boolean) {
-    const { event } = await apiRequest<{ event: CalendarEvent }>({
+    const { event, createdCount } = await apiRequest<{ event: CalendarEvent; createdCount?: number }>({
       ...details, action: editor.event ? "update" : "create", id: editor.id, version: editor.event?.version,
     }, "/api/calendario").catch((cause: unknown) => {
       if (cause instanceof RequestError && cause.status === 409) setReload((value) => value + 1);
@@ -114,7 +95,7 @@ export function WorkCalendar({ settings, statusId }: { settings: boolean; status
     });
     selectMonth(eventMonth);
     setReload((value) => value + 1);
-    setNotice("Evento salvo no calendário.");
+    setNotice(createdCount && createdCount > 1 ? `${createdCount} ocorrências criadas no calendário.` : "Evento salvo no calendário.");
     if (makeCard && event.cardId) window.location.assign(`/?evento=${event.cardId}`);
     else setPanel(makeCard ? { kind: "card", event } : null);
   }
@@ -174,9 +155,9 @@ export function WorkCalendar({ settings, statusId }: { settings: boolean; status
                     </button>
                     {items.length > 0 && <div className="calendar-slots">
                       {items.slice(0, 3).map((event) => <button className="calendar-slot" data-color={byId.get(event.statusId)?.color ?? "gray"}
-                        key={event.id} title={`${event.time} · ${event.name} · ${byId.get(event.statusId)?.name ?? ""}`}
-                        aria-label={`${event.time}, ${event.name}, ${byId.get(event.statusId)?.name ?? ""}`} onClick={() => openEvent(event)}>
-                        <time>{event.time}</time> <span>{event.name}</span>
+                        data-continuation={date > event.date || undefined} key={event.id} title={`${eventTimeLabel(event, date)} · ${event.name} · ${byId.get(event.statusId)?.name ?? ""}`}
+                        aria-label={`${eventTimeLabel(event, date)}, ${event.name}, ${byId.get(event.statusId)?.name ?? ""}`} onClick={() => openEvent(event)}>
+                        <span className="calendar-slot-time">{eventTimeLabel(event, date)}</span> <span>{event.name}</span>
                       </button>)}
                       {items.length > 3 && <button className="calendar-more" onClick={() => setPanel({ kind: "day", date })}>+ {items.length - 3} eventos</button>}
                     </div>}
@@ -201,14 +182,15 @@ export function WorkCalendar({ settings, statusId }: { settings: boolean; status
               <h2 id="dialog-title">Eventos de {describeDate(panel.date).dayMonth}</h2>
               <div className="calendar-day-list">
                 {(byDate.get(panel.date) ?? []).map((event) => <button className="calendar-slot" key={event.id} data-color={byId.get(event.statusId)?.color}
-                  onClick={() => openEvent(event)}><time>{event.time}</time><span>{event.name}</span><small>{byId.get(event.statusId)?.name}</small></button>)}
+                  onClick={() => openEvent(event)}><span className="calendar-slot-time">{eventTimeLabel(event, panel.date)}</span><span>{event.name}</span><small>{byId.get(event.statusId)?.name}</small></button>)}
               </div>
               <div className="dialog-actions"><button className="button primary" onClick={() => newEvent(panel.date)}><Plus size={17} /> Novo evento</button></div>
             </>
           )}
           {panel.kind === "editor" && <CalendarEditor key={panel.id} editor={panel} options={options} statusId={activeStatus?.id} save={(values, card) => saveEvent(panel, values, card)} />}
           {panel.kind === "card" && <EventForm month={month} save={(values) => saveCard(panel.event, values)} defaults={{
-            name: panel.event.name, date: panel.event.date, time: panel.event.time, period: suggestedPeriod(panel.event.time),
+            name: panel.event.name, date: panel.event.date, time: panel.event.allDay ? undefined : panel.event.time,
+            period: panel.event.allDay ? "Manhã" : suggestedPeriod(panel.event.time),
             location: panel.event.location, distancesKm: panel.event.distancesKm,
             sport: byId.get(panel.event.modalityId ?? "")?.cardSport ?? "Outro",
           }} />}
@@ -223,6 +205,12 @@ function CalendarEditor({ editor, options, statusId, save }: {
   editor: Editor; statusId?: string; options: CalendarOption[]; save: (values: Record<string, unknown>, card: boolean) => Promise<void>;
 }) {
   const existing = editor.event;
+  const [date, setDate] = useState(editor.date);
+  const [endDate, setEndDate] = useState(existing?.endDate ?? editor.date);
+  const [allDay, setAllDay] = useState(existing?.allDay ?? false);
+  const [time, setTime] = useState(existing?.allDay ? "" : existing?.time ?? "");
+  const [endTime, setEndTime] = useState(existing?.endTime ?? "");
+  const [recurrence, setRecurrence] = useState("none");
   const [categoryId, setCategoryId] = useState(existing?.categoryId ?? "");
   const [modalityId, setModalityId] = useState(existing?.modalityId ?? "");
   const { busy, error, submit } = useSubmit();
@@ -235,19 +223,38 @@ function CalendarEditor({ editor, options, statusId, save }: {
     <form method="post" onSubmit={(event) => {
       const intent = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("value");
       void submit(event, (fields) => save({
-        name: fields.get("name"), clientName: fields.get("clientName"), date: fields.get("date"), time: fields.get("time"),
+        name: fields.get("name"), clientId: fields.get("clientId") || null, clientName: fields.get("clientName"),
+        date, endDate, allDay, time: fields.get("time"), endTime: fields.get("endTime"),
+        recurrence: fields.get("recurrence") ?? "none",
         location: fields.get("location"), categoryId, modalityId: modalityId || null,
         statusId: fields.get("statusId"), workTypeId: fields.get("workTypeId"), distancesKm: readDistances(fields),
       }, intent === "card"));
     }}>
       <h2 id="dialog-title">{existing ? "Editar evento do calendário" : "Novo evento no calendário"}</h2>
       <div className="form-fields">
+        {existing && <p className="dialog-subtitle">{describeDate(existing.date).dayMonth} de {existing.date.slice(0, 4)}{existing.endDate && existing.endDate !== existing.date && ` até ${describeDate(existing.endDate).dayMonth} de ${existing.endDate.slice(0, 4)}`}</p>}
         <label>Nome do evento<input autoFocus name="name" required minLength={2} maxLength={100} defaultValue={existing?.name} /></label>
-        <label>Nome do cliente<input name="clientName" maxLength={100} defaultValue={existing?.clientName} /></label>
+        <ClientPicker initialId={existing?.clientId} initialName={existing?.clientName} />
         <div className="field-row">
-          <label>Data<input name="date" type="date" required min="2000-01-01" max="2099-12-31" defaultValue={editor.date} /></label>
-          <label>Hora<input name="time" type="time" required defaultValue={existing?.time} /></label>
+          <label>Data de início<input name="date" type="date" required min="2000-01-01" max="2099-12-31" value={date} onChange={(event) => {
+            const next = event.currentTarget.value;
+            if (endDate === date || endDate < next) setEndDate(next);
+            setDate(next);
+          }} /></label>
+          <label>Data de fim<input name="endDate" type="date" required min={date || "2000-01-01"} max="2099-12-31"
+            value={endDate} onChange={(event) => setEndDate(event.currentTarget.value)} /></label>
         </div>
+        <label className="calendar-check"><input name="allDay" type="checkbox" checked={allDay} onChange={(event) => setAllDay(event.currentTarget.checked)} /> Dia inteiro</label>
+        {!allDay && <div className="field-row">
+          <label>Horário de início<input name="time" type="time" required value={time} onChange={(event) => setTime(event.currentTarget.value)} /></label>
+          <label>Horário de fim <span className="field-optional">opcional</span><input name="endTime" type="time" value={endTime} onChange={(event) => setEndTime(event.currentTarget.value)} /></label>
+        </div>}
+        {!existing && <label>Repetição<select name="recurrence" value={recurrence} onChange={(event) => setRecurrence(event.currentTarget.value)}>
+          <option value="none">Não repetir</option>
+          <option value="weekly-month">{weeklyLabel(date)}</option>
+        </select></label>}
+        {!existing && recurrence !== "none" && <p className="dialog-subtitle">A repetição inclui todas as datas deste dia da semana no mês, inclusive as anteriores à data escolhida. Cada ocorrência poderá ser editada individualmente.</p>}
+        {existing?.seriesId && <p className="dialog-subtitle">Esta ocorrência faz parte de uma repetição semanal. As alterações serão aplicadas a esta ocorrência.</p>}
         <label>Local<input name="location" maxLength={160} defaultValue={existing?.location} /></label>
         <div className="field-row">
           <label>Categoria<select name="categoryId" required value={categoryId} onChange={(event) => {

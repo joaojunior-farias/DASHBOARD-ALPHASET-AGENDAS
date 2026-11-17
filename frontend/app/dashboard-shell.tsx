@@ -7,7 +7,7 @@ import { apiRequest, Dialog, LogoutButton, TeamMark, useSubmit } from "./agenda-
 
 type WorkStatus = { id: string; name: string; color: string | null };
 type Profile = { name: string; avatar: string | null; role: "master" | "operator"; statuses: WorkStatus[] };
-type Area = "team" | "closed" | "calendar" | "settings" | "users";
+type Area = "team" | "closed" | "calendar" | "settings" | "users" | "clients";
 
 export function DashboardShell({ area, statusId, statuses, createCard, showAgendaLink, children }: {
   area: Area; statusId?: string; statuses?: WorkStatus[]; createCard?: () => void; showAgendaLink?: () => void; children: React.ReactNode;
@@ -60,6 +60,7 @@ export function DashboardShell({ area, statusId, statuses, createCard, showAgend
               <span className="dashboard-status-dot" data-color={status.color} />{status.name}
             </Link>)}
           </details>
+          <Link href="/clientes" aria-current={area === "clients" ? "page" : undefined}><Users size={17} /> Clientes</Link>
           <Link href="/calendario?configuracoes=1" aria-current={area === "settings" ? "page" : undefined}><Settings size={17} /> Configurações</Link>
           {profile?.role === "master" && <Link href="/usuarios" aria-current={area === "users" ? "page" : undefined}><Users size={17} /> Usuários</Link>}
         </nav>

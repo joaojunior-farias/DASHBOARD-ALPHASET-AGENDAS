@@ -360,3 +360,5 @@ svg { flex-shrink: 0; vertical-align: middle; }
   .dashboard-nav { display: none; border-bottom: 1px solid var(--line); }
   .dashboard-nav.open { display: grid; }
 }
+
+.field-optional { color: var(--muted); font-size: 12px; font-weight: 500; }

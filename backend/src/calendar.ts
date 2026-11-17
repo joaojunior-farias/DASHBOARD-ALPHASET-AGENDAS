@@ -1,7 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { and, asc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { isDistanceList, timePattern, uuidPattern, validDate } from "./agenda-model.js";
 import { getDb } from "./db/index.js";
-import { calendarEvents, calendarOptions, events } from "./db/schema.js";
+import { calendarEvents, calendarOptions, clients, events } from "./db/schema.js";
 import { adminCookie, validAdminSession } from "./server/admin-session.js";
 import { acceptsJson, requestSite } from "./server/config.js";
 import { readCookie } from "./server/cookies.js";
@@ -39,7 +40,7 @@ export async function GET(request: Request) {
     db.select().from(calendarOptions).orderBy(asc(calendarOptions.name)),
     db.select({ event: calendarEvents, cardId: events.id }).from(calendarEvents)
       .leftJoin(events, eq(events.calendarEventId, calendarEvents.id))
-      .where(and(gte(calendarEvents.date, start), lt(calendarEvents.date, end)))
+      .where(and(gte(calendarEvents.endDate, start), lt(calendarEvents.date, end)))
       .orderBy(asc(calendarEvents.date), asc(calendarEvents.time), asc(calendarEvents.id)),
   ]);
   return json({ options, events: rows.map(({ event, cardId }) => ({ ...event, cardId })) });
@@ -80,24 +81,46 @@ async function addOption(input: Record<string, unknown>) {
   return option ? json({ option }, 201) : error("Já existe uma opção com esse nome.", 409);
 }
 
+function addDays(date: string, days: number) {
+  const value = new Date(date + "T12:00:00Z");
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
 async function saveEvent(input: Record<string, unknown>, creating: boolean) {
-  const { id, date, time, categoryId, statusId, workTypeId, version } = input;
+  const { id, date, categoryId, statusId, workTypeId, version } = input;
   const modalityId = input.modalityId ?? null;
   const distancesKm = input.distancesKm ?? [];
   const name = cleanText(input.name);
-  const clientName = cleanText(input.clientName);
   const location = cleanText(input.location);
-  if (!isUuid(id) || name.length < 2 || name.length > 100 || clientName.length > 100 || location.length > 160
-    || /[\u0000-\u001f\u007f]/u.test(name + clientName + location)
-    || typeof date !== "string" || !validDate(date) || typeof time !== "string" || !timePattern.test(time)
+  const recurrence = input.recurrence ?? "none";
+  if (!isUuid(id) || name.length < 2 || name.length > 100 || location.length > 160
+    || /[\u0000-\u001f\u007f]/u.test(name + location)
+    || typeof date !== "string" || !validDate(date)
     || !isUuid(categoryId) || !isUuid(statusId) || !isUuid(workTypeId)
-    || (modalityId !== null && !isUuid(modalityId)) || !isDistanceList(distancesKm)) {
-    return error("Confira o nome, a data, a hora e as opções do evento. As distâncias devem ser maiores que zero.", 400);
+    || (modalityId !== null && !isUuid(modalityId)) || !isDistanceList(distancesKm)
+    || (recurrence !== "none" && recurrence !== "weekly-month") || (!creating && recurrence !== "none")) {
+    return error("Confira o nome, as datas, os horários e as opções do evento.", 400);
   }
   if (!creating && (typeof version !== "number" || !Number.isInteger(version) || version < 1 || version > 2_147_483_647)) {
     return error("Reabra o evento para editar a versão atual.", 400);
   }
   const db = getDb();
+  const [previous] = creating ? [] : await db.select().from(calendarEvents).where(eq(calendarEvents.id, id));
+  const endDate = input.endDate ?? (previous && previous.endDate !== previous.date ? previous.endDate : date);
+  const allDay = input.allDay ?? previous?.allDay ?? false;
+  const time = allDay === true ? "00:00" : input.time;
+  const suppliedEndTime = input.endTime === undefined ? previous?.endTime ?? null : input.endTime;
+  const endTime = allDay === true || suppliedEndTime === "" ? null : suppliedEndTime;
+  const clientId = input.clientId === undefined ? previous?.clientId ?? null : input.clientId;
+  let clientName = cleanText(input.clientName === undefined ? previous?.clientName : input.clientName);
+  if (typeof endDate !== "string" || !validDate(endDate) || endDate < date || typeof allDay !== "boolean"
+    || typeof time !== "string" || !timePattern.test(time)
+    || (endTime !== null && (typeof endTime !== "string" || !timePattern.test(endTime) || (date === endDate && endTime <= time)))
+    || (clientId !== null && !isUuid(clientId)) || clientName.length > 100 || /[\u0000-\u001f\u007f]/u.test(clientName)) {
+    return error("Confira o cliente e o período. O fim precisa ser posterior ao início.", 400);
+  }
+
   const optionIds = [categoryId, statusId, workTypeId];
   if (modalityId) optionIds.push(modalityId);
   const options = await db.select().from(calendarOptions).where(inArray(calendarOptions.id, optionIds));
@@ -107,19 +130,43 @@ async function saveEvent(input: Record<string, unknown>, creating: boolean) {
     || (modalityId && !options.some((option) => option.kind === "modality" && option.id === modalityId && option.parentId === categoryId))) {
     return error("Confira a categoria, a modalidade, o status e o tipo de trabalho.", 400);
   }
-
-  const details = { name, clientName, date, time, location, categoryId, modalityId, statusId, workTypeId, distancesKm };
-  if (creating) {
-    const [event] = await db.insert(calendarEvents).values({ id, ...details }).onConflictDoNothing().returning();
-    if (event) return json({ event: { ...event, cardId: null } }, 201);
-  } else {
+  if (clientId) {
+    const [client] = await db.select({ name: clients.name }).from(clients).where(eq(clients.id, clientId));
+    if (!client) return error("Selecione um cliente cadastrado ou informe o nome.", 400);
+    clientName = client.name;
+  }
+  const details = { name, clientName, clientId, date, endDate, time, endTime, allDay, location, categoryId, modalityId, statusId, workTypeId, distancesKm };
+  if (!creating) {
     const [event] = await db.update(calendarEvents).set({ ...details, version: sql`${calendarEvents.version} + 1` })
       .where(and(eq(calendarEvents.id, id), eq(calendarEvents.version, Number(version)))).returning();
     if (!event) return error("O evento foi alterado. Reabra para editar a versão atual.", 409);
     const [card] = await db.select({ id: events.id }).from(events).where(eq(events.calendarEventId, id));
     return json({ event: { ...event, cardId: card?.id ?? null } });
   }
-  const [saved] = await db.select({ event: calendarEvents, cardId: events.id }).from(calendarEvents)
-    .leftJoin(events, eq(events.calendarEventId, calendarEvents.id)).where(eq(calendarEvents.id, id));
-  return saved ? json({ event: { ...saved.event, cardId: saved.cardId } }) : error("Não foi possível salvar o evento.", 409);
+  const occurrences = [{ id, ...details, seriesId: recurrence === "weekly-month" ? id : null }];
+  if (recurrence === "weekly-month") {
+    const firstOffset = -Math.floor((Number(date.slice(-2)) - 1) / 7) * 7;
+    for (let offset = firstOffset; ; offset += 7) {
+      const nextDate = addDays(date, offset);
+      if (!nextDate.startsWith(date.slice(0, 7))) break;
+      if (offset === 0) continue;
+      const nextEnd = addDays(endDate, offset);
+      if (!validDate(nextEnd)) return error("A recorrência ultrapassa o período permitido pelo calendário.", 400);
+      occurrences.push({ id: randomUUID(), ...details, date: nextDate, endDate: nextEnd, seriesId: id });
+    }
+  }
+  return db.transaction(async (tx) => {
+    // Serialize retries of the same form so the complete series is created once.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${id}, 0))`);
+    const [saved] = await tx.select({ event: calendarEvents, cardId: events.id }).from(calendarEvents)
+      .leftJoin(events, eq(events.calendarEventId, calendarEvents.id)).where(eq(calendarEvents.id, id));
+    if (saved) {
+      const members = saved.event.seriesId
+        ? await tx.select({ id: calendarEvents.id }).from(calendarEvents).where(eq(calendarEvents.seriesId, saved.event.seriesId))
+        : [saved.event];
+      return json({ event: { ...saved.event, cardId: saved.cardId }, createdCount: members.length });
+    }
+    const [event] = await tx.insert(calendarEvents).values(occurrences).returning();
+    return json({ event: { ...event, cardId: null }, createdCount: occurrences.length }, 201);
+  });
 }

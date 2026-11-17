@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { serve } from "@hono/node-server";
 import * as agenda from "./agenda.js";
+import * as clients from "./clients.js";
 import * as calendar from "./calendar.js";
 import * as photographers from "./photographers.js";
 import * as session from "./session.js";
@@ -31,6 +32,7 @@ type Handler = (request: Request) => Response | Promise<Response>;
 const routes = new Map<string, { GET?: Handler; POST?: Handler }>([
   ["/api/agenda", agenda],
   ["/api/calendario", calendar],
+  ["/api/clientes", clients],
   ["/api/fotografos", photographers],
   ["/api/sessao", session],
   ["/api/usuarios", users],

@@ -12,12 +12,24 @@ export const calendarOptions = pgTable("calendar_options", {
   cardSport: text("card_sport").$type<Sport>(),
 });
 
+export const clients = pgTable("clients", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+}, (table) => [index("clients_name").on(sql`lower(${table.name})`)]);
+
 export const calendarEvents = pgTable("calendar_events", {
   id: uuid("id").primaryKey(),
   name: text("name").notNull(),
   clientName: text("client_name").notNull().default(""),
+  clientId: uuid("client_id").references(() => clients.id),
   date: date("date", { mode: "string" }).notNull(),
   time: text("time").notNull(),
+  endDate: date("end_date", { mode: "string" }).notNull(),
+  endTime: text("end_time"),
+  allDay: boolean("all_day").notNull().default(false),
+  seriesId: uuid("series_id"),
   location: text("location").notNull().default(""),
   categoryId: uuid("category_id").notNull().references(() => calendarOptions.id),
   modalityId: uuid("modality_id").references(() => calendarOptions.id),

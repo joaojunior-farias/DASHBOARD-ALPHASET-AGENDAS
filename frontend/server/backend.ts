@@ -1,6 +1,6 @@
 import { requestSite } from "./config";
 
-type Endpoint = "/api/agenda" | "/api/calendario" | "/api/sessao" | "/api/usuarios" | "/api/fotografos" | "/api/perfil";
+type Endpoint = "/api/clientes" | "/api/agenda" | "/api/calendario" | "/api/sessao" | "/api/usuarios" | "/api/fotografos" | "/api/perfil";
 type HeadersReader = Pick<Headers, "get">;
 
 function proxyError(message: string, status: number) {

@@ -53,3 +53,9 @@
   .calendar-markers span { width: 6px; height: 6px; border-radius: 50%; background: var(--slot-color); }
   .calendar-settings { grid-template-columns: minmax(0, 1fr); }
 }
+
+.calendar-client { display: grid; gap: 10px; }
+.calendar-check { display: flex !important; align-items: center; gap: 9px !important; min-height: 44px; cursor: pointer; }
+.form-fields .calendar-check input { width: 20px; height: 20px; min-height: 20px; accent-color: var(--orange); }
+.calendar-slot .calendar-slot-time { flex-shrink: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.calendar-slot[data-continuation="true"] { border-inline-start-style: dashed; }

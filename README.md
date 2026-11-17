@@ -10,6 +10,12 @@ agenda.alpha7studio.com.br ───┘
 
 O dashboard pede usuário e senha antes de mostrar eventos e respostas. A conta master cria usuários do painel. Os fotógrafos podem criar conta com nome, e-mail e senha diretamente na página da agenda. Depois, entram com e-mail e senha. As respostas ficam na conta, inclusive as anteriores quando o cadastro é feito no navegador que ainda tem o convite original salvo.
 
+Em **Clientes**, cadastre o nome e, se desejar, e-mail e telefone. Ao criar ou editar um evento do calendário, selecione um cliente cadastrado ou escolha **Digitar nome do cliente**. O cadastro pode ser aberto em outra aba pelo próprio formulário.
+
+No calendário, **Data de início** e **Data de fim** incluem os dois dias e mostram o evento em todos os dias do intervalo, inclusive quando ele atravessa meses. Marque **Dia inteiro** ou preencha o horário de início e, opcionalmente, o horário de fim.
+
+Ao criar um evento, escolha a repetição semanal para gerar ocorrências em todas as datas do mesmo dia da semana naquele mês, inclusive as anteriores à data selecionada. Cada ocorrência mantém a duração, os horários e o cliente e pode ser editada individualmente.
+
 Em **Gestão da equipe**, use **Encerrar** para fechar as inscrições e manter o card em lilás no dashboard. Em **Montar escala**, selecione uma conta de fotógrafo ou adicione o nome de quem ainda não tem cadastro. Fotógrafos cadastrados recebem a confirmação em **Minhas respostas**. Nomes digitados ficam na escala do dashboard.
 
 Em **Usuários**, a conta master pode resetar senhas de operadores e fotógrafos. Defina `USER_RESET_PASSWORD` no backend com 12 a 256 caracteres. Ao resetar, as sessões anteriores são encerradas e, no próximo login, a pessoa precisa usar a senha temporária e cadastrar uma senha própria.
