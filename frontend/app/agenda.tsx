@@ -13,7 +13,7 @@ import {
 
 type Mode = "admin" | "photographer";
 type PhotoView = "pending" | "history";
-type AnswerFilter = "all" | "available" | "unavailable";
+type AnswerFilter = "all" | "confirmed" | "declined" | "available" | "unavailable";
 type Panel =
   | { kind: "event"; event?: AdminEvent }
   | { kind: "replies"; eventId: string }
@@ -31,6 +31,7 @@ const selectionMessages = {
   declined: "Você não está confirmado para participar deste evento.",
 };
 const selectionLabels = { pending: "Aguardando aprovação", confirmed: "Confirmado", declined: "Não confirmado" };
+const eventsPerPage = 3;
 
 class RequestError extends Error {
   constructor(message: string, public status: number, public canRegister = false) { super(message); }
@@ -98,10 +99,11 @@ function EventCard({ event, showYear, onReplies, onEdit, onRemove, onPublish, on
   const admin = "replies" in event;
   const available = admin ? event.replies.filter((reply) => reply.available).length : 0;
   const confirmed = admin ? event.replies.filter((reply) => reply.selection === "confirmed").length : 0;
+  const selection = !admin && event.reply?.available ? event.reply.selection : null;
   const published = event.published !== false;
   const hasBeenPublished = admin && (published || event.hasBeenPublished);
   return (
-    <article className="event-card">
+    <article className={selection ? `event-card ${selection}` : "event-card"}>
       <div className="card-top">
         <div className="date-block">
           <strong>{event.date.slice(-2)}</strong>
@@ -133,8 +135,8 @@ function EventCard({ event, showYear, onReplies, onEdit, onRemove, onPublish, on
             {event.reply.available ? <Check size={16} /> : <X size={16} />}{event.reply.available ? "Disponível" : "Indisponível"}
           </p>}
           {event.reply?.available && (
-            <p className={`selection-status ${event.reply.selection ?? "pending"}`} role="status">
-              {selectionMessages[event.reply.selection ?? "pending"]}
+            <p className={`selection-status ${selection ?? "pending"}`} role="status">
+              {selectionMessages[selection ?? "pending"]}
             </p>
           )}
           {!published && <p className="closed-status">Inscrições encerradas{event.needsReconfirmation && " · Data alterada"}</p>}
@@ -166,12 +168,14 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [inviteError, setInviteError] = useState("");
   const [month, setMonth] = useState(() => today().slice(0, 7));
+  const [pagePosition, setPagePosition] = useState<number | string>(1);
   const [loadError, setLoadError] = useState<RequestError | null>(null);
   const [reload, setReload] = useState(0);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [notice, setNotice] = useState("");
   const [mutation, setMutation] = useState(0);
   const version = useRef(0);
+  const listHeading = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -234,8 +238,19 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
   const events = admin ? adminData?.events : pendingEvents;
   const historyEntries = photoEvents?.filter((event) => event.reply || !event.published).reverse() ?? [];
   const entries = history
-    ? historyEntries.filter((event) => answerFilter === "all" || event.reply?.available === (answerFilter === "available"))
+    ? historyEntries.filter(({ reply }) => {
+      if (answerFilter === "all") return true;
+      if (answerFilter === "confirmed" || answerFilter === "declined") return reply?.selection === answerFilter;
+      return reply?.available === (answerFilter === "available");
+    })
     : events?.filter((event) => event.date.startsWith(month)) ?? [];
+  const pageCount = Math.max(1, Math.ceil(entries.length / eventsPerPage));
+  const requestedPage = typeof pagePosition === "number"
+    ? pagePosition
+    : Math.floor(entries.findIndex((event) => event.id === pagePosition) / eventsPerPage) + 1;
+  const page = Math.max(1, Math.min(requestedPage, pageCount));
+  const pageStart = (page - 1) * eventsPerPage;
+  const visibleEntries = entries.slice(pageStart, pageStart + eventsPerPage);
   const nextEvent = events?.find((event) => event.date.slice(0, 7) > month);
   const before = events?.findLast((event) => event.date.slice(0, 7) < month);
   const alternateMonth = (nextEvent ?? before)?.date.slice(0, 7);
@@ -250,6 +265,24 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
   const canStart = Boolean(events);
   const showSignIn = admin && loadError?.status === 401;
   const showTeamAccess = !admin && loadError?.status === 401;
+
+  function showMonth(value: string) {
+    if (value === month) return;
+    setMonth(value);
+    setPagePosition(1);
+  }
+
+  function showPhotoView(value: PhotoView) {
+    if (value === photoView) return;
+    setPhotoView(value);
+    setPagePosition(1);
+  }
+
+  function changePage(value: number) {
+    setPagePosition(value);
+    listHeading.current?.focus({ preventScroll: true });
+    listHeading.current?.scrollIntoView({ block: "start" });
+  }
 
   function finish(message: string, closePanel = true) {
     version.current += 1;
@@ -277,6 +310,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
       };
     });
     setMonth(event.date.slice(0, 7));
+    setPagePosition(event.id);
     if (dateChanged && event.published !== false) finish("Data alterada. A equipe precisa responder novamente.");
     else finish(existing ? "Evento atualizado." : "Rascunho salvo.");
   }
@@ -299,6 +333,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
     setMonth(event.date.slice(0, 7));
     setPhotoView("history");
     setAnswerFilter("all");
+    setPagePosition(event.id);
     finish("Disponibilidade enviada para a Alpha Set.");
   }
 
@@ -369,8 +404,8 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
 
         {!admin && canStart && (
           <div className="agenda-views" role="group" aria-label="Seções da agenda">
-            <button className="button outline" aria-pressed={!history} onClick={() => setPhotoView("pending")}><CalendarDays size={17} /> Para responder</button>
-            <button className="button outline" aria-pressed={history} onClick={() => setPhotoView("history")}><Check size={17} /> Minhas respostas</button>
+            <button className="button outline" aria-pressed={!history} onClick={() => showPhotoView("pending")}><CalendarDays size={17} /> Para responder</button>
+            <button className="button outline" aria-pressed={history} onClick={() => showPhotoView("history")}><Check size={17} /> Minhas respostas</button>
           </div>
         )}
 
@@ -383,6 +418,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
                   <span><strong>{event.name}</strong><small>{describeDate(event.date).dayMonth} de {event.date.slice(0, 4)}</small></span>
                   <button className="button outline" onClick={() => {
                     setMonth(event.date.slice(0, 7));
+                    setPagePosition(event.id);
                     setPanel({ kind: "reply", event });
                   }}>Reconfirmar</button>
                 </li>
@@ -395,25 +431,32 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
           <section className="month-section" aria-label={history ? "Histórico de respostas" : "Eventos por mês"}>
             <div className="month-header">
               <div className="month-heading">
-                <h2>{history ? "Histórico" : monthLabel(month)}</h2>
+                <h2 ref={listHeading} tabIndex={-1}>{history ? "Histórico" : monthLabel(month)}</h2>
                 <span className="event-total">{entries.length} {entries.length === 1 ? "evento" : "eventos"}</span>
               </div>
               <div className="month-actions">
                 {history ? (
-                  <div className="month-nav answer-filters" role="group" aria-label="Filtrar por disponibilidade">
-                    <button className="button outline" aria-pressed={answerFilter === "all"} onClick={() => setAnswerFilter("all")}>Todas</button>
-                    <button className="button outline" aria-pressed={answerFilter === "available"} onClick={() => setAnswerFilter("available")}>Disponível</button>
-                    <button className="button outline" aria-pressed={answerFilter === "unavailable"} onClick={() => setAnswerFilter("unavailable")}>Indisponível</button>
-                  </div>
+                  <label className="answer-filter">Filtrar respostas
+                    <select value={answerFilter} onChange={(event) => {
+                      setAnswerFilter(event.currentTarget.value as AnswerFilter);
+                      setPagePosition(1);
+                    }}>
+                      <option value="all">Todas</option>
+                      <option value="confirmed">Confirmados</option>
+                      <option value="declined">Não confirmados</option>
+                      <option value="available">Disponível</option>
+                      <option value="unavailable">Indisponível</option>
+                    </select>
+                  </label>
                 ) : <div className="month-nav" role="group" aria-label="Navegação mensal">
                   {admin ? (
                     <>
-                      <button className="button outline" onClick={() => setMonth(shiftMonth(month, -1))}>Mês anterior</button>
-                      <button className="button outline" onClick={() => setMonth(shiftMonth(month, 1))}>Próximo mês</button>
+                      <button className="button outline" onClick={() => showMonth(shiftMonth(month, -1))}>Mês anterior</button>
+                      <button className="button outline" onClick={() => showMonth(shiftMonth(month, 1))}>Próximo mês</button>
                     </>
                   ) : photoMonths.map((option) => (
                     <button key={option} className="button outline month-choice" aria-pressed={option === month}
-                      onClick={() => setMonth(option)}>
+                      onClick={() => showMonth(option)}>
                       {monthLabel(option, option.slice(0, 4) !== currentMonth.slice(0, 4))}
                     </button>
                   ))}
@@ -424,19 +467,28 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
             </div>
             {loadError && <p className="form-error" role="alert">{loadError.message} <button className="text-button" onClick={() => setReload(reload + 1)}>Atualizar</button></p>}
             {entries.length ? (
-              <div className="event-grid">
-                {entries.map((event) => <EventCard key={event.id} event={event} showYear={history}
-                  onReplies={(eventId) => setPanel({ kind: "replies", eventId })}
-                  onEdit={(event) => setPanel({ kind: "event", event })}
-                  onRemove={(event) => setPanel({ kind: "remove", event })}
-                  onPublish={publishEvent}
-                  onReply={(event, available) => setPanel({ kind: "reply", event, available })} />)}
-              </div>
+              <>
+                <div className="event-grid">
+                  {visibleEntries.map((event) => <EventCard key={event.id} event={event} showYear={history}
+                    onReplies={(eventId) => setPanel({ kind: "replies", eventId })}
+                    onEdit={(event) => setPanel({ kind: "event", event })}
+                    onRemove={(event) => setPanel({ kind: "remove", event })}
+                    onPublish={publishEvent}
+                    onReply={(event, available) => setPanel({ kind: "reply", event, available })} />)}
+                </div>
+                {pageCount > 1 && (
+                  <nav className="event-pagination" aria-label="Paginação de eventos">
+                    <button className="button outline" type="button" disabled={page === 1} onClick={() => changePage(page - 1)}>Anterior</button>
+                    <span role="status">Página {page} de {pageCount}</span>
+                    <button className="button outline" type="button" disabled={page === pageCount} onClick={() => changePage(page + 1)}>Próxima</button>
+                  </nav>
+                )}
+              </>
             ) : (
               <div className="empty">
                 <div className="empty-icon"><CalendarDays size={26} /></div>
                 <h3>{history ? "Nenhuma resposta neste filtro" : admin ? "Nenhum evento neste mês" : "Nenhum evento para responder neste mês"}</h3>
-                {admin && alternateMonth && <button className="button outline" onClick={() => setMonth(alternateMonth)}>
+                {admin && alternateMonth && <button className="button outline" onClick={() => showMonth(alternateMonth)}>
                   {monthLabel(alternateMonth)} <ArrowRight size={17} />
                 </button>}
               </div>
@@ -636,7 +688,6 @@ function TeamAccessForm({ creating, signedIn }: { creating: boolean; signedIn: (
 
 function EventForm({ existing, month, save }: { existing?: AdminEvent; month: string; save: (values: EventDetails) => Promise<void> }) {
   const [period, setPeriod] = useState<EventDetails["period"]>(existing?.period ?? "Manhã");
-  const [sport, setSport] = useState<Sport | "">(existing?.sport ?? "");
   const [distances, setDistances] = useState(() => {
     const values = existing?.distancesKm?.length ? existing.distancesKm.map(formatDistance) : [""];
     return values.map((text, id) => ({ id, text }));
@@ -648,10 +699,10 @@ function EventForm({ existing, month, save }: { existing?: AdminEvent; month: st
   const [date, setDate] = useState(initialDate);
   return (
     <form method="post" onSubmit={(event) => void submit(event, (values) => save({
-        name: String(values.get("name")), date: String(values.get("date")), time: String(values.get("time")),
-        meetingTime: String(values.get("meetingTime") ?? "") || null,
-        distancesKm: values.getAll("distanceKm").map(String).filter(Boolean).map((text) => Number(text.replace(",", "."))),
-        period, sport: values.get("sport") as Sport, location: String(values.get("location")),
+      name: String(values.get("name")), date: String(values.get("date")), time: String(values.get("time")),
+      meetingTime: String(values.get("meetingTime") ?? "") || null,
+      distancesKm: values.getAll("distanceKm").map(String).filter(Boolean).map((text) => Number(text.replace(",", "."))),
+      period, sport: values.get("sport") as Sport, location: String(values.get("location")),
     }))}>
       <h2 id="dialog-title">{existing ? "Editar evento" : "Novo evento"}</h2>
       <div className="form-fields">
@@ -668,32 +719,30 @@ function EventForm({ existing, month, save }: { existing?: AdminEvent; month: st
           <label>Período<select name="period" value={period} onChange={(event) => setPeriod(event.currentTarget.value as EventDetails["period"])}>
             {PERIODS.map((value) => <option key={value}>{value}</option>)}
           </select></label>
-          <label>Modalidade<select name="sport" required value={sport} onChange={(event) => setSport(event.currentTarget.value as Sport)}>
+          <label>Modalidade<select name="sport" required defaultValue={existing?.sport ?? ""}>
             <option value="" disabled>Selecione</option>
             {SPORTS.map((value) => <option key={value}>{value}</option>)}
           </select></label>
         </div>
-        {sport === "Corrida" && (
-          <fieldset className="distance-fields">
-            <legend>Quilometragens da corrida</legend>
-            {distances.map(({ id, text }, index) => (
-              <div className="distance-row" key={id}>
-                <input name="distanceKm" aria-label={`Distância ${index + 1} em km`} type="text" inputMode="decimal" pattern={distancePattern}
-                  placeholder="Ex. 5" value={text} onInput={(event) => {
-                    const value = event.currentTarget.value;
-                    setDistances((current) => current.map((distance) => distance.id === id ? { id, text: value } : distance));
-                  }} />
-                <span>km</span>
-                <button className="button icon outline" type="button" aria-label={`Remover distância ${index + 1}`}
-                  onClick={() => setDistances((current) => current.filter((distance) => distance.id !== id))}><X size={17} /></button>
-              </div>
-            ))}
-            <button className="button outline" type="button" onClick={() => {
-              const id = nextDistanceId.current++;
-              setDistances((current) => [...current, { id, text: "" }]);
-            }}><Plus size={17} />Adicionar distância</button>
-          </fieldset>
-        )}
+        <fieldset className="distance-fields">
+          <legend>Quilometragens</legend>
+          {distances.map(({ id, text }, index) => (
+            <div className="distance-row" key={id}>
+              <input name="distanceKm" aria-label={`Distância ${index + 1} em km`} type="text" inputMode="decimal" pattern={distancePattern}
+                placeholder="Ex. 5" value={text} onInput={(event) => {
+                  const value = event.currentTarget.value;
+                  setDistances((current) => current.map((distance) => distance.id === id ? { id, text: value } : distance));
+                }} />
+              <span>km</span>
+              <button className="button icon outline" type="button" aria-label={`Remover distância ${index + 1}`}
+                onClick={() => setDistances((current) => current.filter((distance) => distance.id !== id))}><X size={17} /></button>
+            </div>
+          ))}
+          <button className="button outline" type="button" onClick={() => {
+            const id = nextDistanceId.current++;
+            setDistances((current) => [...current, { id, text: "" }]);
+          }}><Plus size={17} />Adicionar distância</button>
+        </fieldset>
       </div>
       {existing && existing.published !== false && date && date !== existing.date && (
         <p className="date-alert" role="status"><CalendarDays size={16} /> Ao salvar a nova data, as respostas serão zeradas e a equipe precisará responder novamente.</p>

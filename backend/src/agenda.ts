@@ -56,7 +56,7 @@ function eventDetails(input: Record<string, unknown>): EventDetails | null {
     || (meetingTime != null && (typeof meetingTime !== "string" || !timePattern.test(meetingTime)))
     || (distancesKm !== undefined && !isDistanceList(distancesKm))
     || location.length < 2 || location.length > 160 || !period || !sport) return null;
-  return { name, date, time, meetingTime, period, sport, location, distancesKm: sport === "Corrida" ? distancesKm : [] };
+  return { name, date, time, meetingTime, period, sport, location, distancesKm };
 }
 
 export async function GET(request: Request) {
