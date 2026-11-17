@@ -1,20 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { getDb } from "./db/index.js";
-import { events, responses } from "./db/schema.js";
+import { calendarEvents, calendarOptions, events, responses } from "./db/schema.js";
 import { adminCookie, validAdminSession } from "./server/admin-session.js";
 import { acceptsJson, loginRequired, requestSite } from "./server/config.js";
-import { type EventDetails, PERIODS, SPORTS, validDate } from "./agenda-model.js";
+import { type EventDetails, isDistanceList, PERIODS, SPORTS, timePattern, uuidPattern, validDate } from "./agenda-model.js";
 
 import { readCookie } from "./server/cookies.js";
 import { signedInPhotographer } from "./server/photographer-session.js";
-import { ensureInvite, invitedParticipant } from "./server/team-invite.js";
+import { ensureInvite } from "./server/team-invite.js";
 
-const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const responseFields = { name: responses.name, available: responses.available, selection: responses.selection };
 const adminResponseFields = { id: responses.id, ...responseFields };
 type AdminReply = Pick<typeof responses.$inferSelect, keyof typeof adminResponseFields>;
-const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 function json(data: unknown, status = 200) {
   return Response.json(data, {
@@ -33,10 +31,6 @@ function isPositiveInteger(value: unknown): value is number {
 
 function cleanName(value: unknown) {
   return typeof value === "string" ? value.trim().replace(/\s+/gu, " ") : "";
-}
-
-function isDistanceList(value: unknown): value is number[] {
-  return Array.isArray(value) && value.every((km) => typeof km === "number" && Number.isFinite(km) && km > 0);
 }
 
 function selectionVersion(replies: AdminReply[]) {
@@ -82,7 +76,7 @@ export async function GET(request: Request) {
 
   const account = await signedInPhotographer(request);
   if (!account) {
-    return json({ error: loginRequired(site.kind), canRegister: Boolean(await invitedParticipant(request)) }, 401);
+    return error(loginRequired(site.kind), 401);
   }
   const rows = await getDb().select({
     event: { id: events.id, name: events.name, date: events.date, time: events.time, meetingTime: events.meetingTime,
@@ -150,9 +144,24 @@ export async function POST(request: Request) {
   }
   const { action, eventId, dateRevision = 1 } = input;
   const db = getDb();
-  if (action === "create" || action === "create-draft" || action === "update") {
+  if (action === "create" || action === "create-draft" || action === "create-calendar-card" || action === "update") {
     const details = eventDetails(input);
     if (!details) return error("Confira os dados do evento. As distâncias devem ser maiores que zero.", 400);
+    if (action === "create-calendar-card") {
+      const { calendarEventId } = input;
+      if (typeof calendarEventId !== "string" || !uuidPattern.test(calendarEventId)) return error("Evento do calendário inválido.", 400);
+      return db.transaction(async (tx) => {
+        const [source] = await tx.select({ category: calendarOptions.code }).from(calendarEvents)
+          .innerJoin(calendarOptions, eq(calendarEvents.categoryId, calendarOptions.id))
+          .where(eq(calendarEvents.id, calendarEventId)).for("update", { of: calendarEvents });
+        if (!source || source.category !== "sports") return error("Escolha um evento da categoria Esportivo.", 400);
+        const [event] = await tx.insert(events).values({ id: randomUUID(), ...details, calendarEventId })
+          .onConflictDoNothing({ target: events.calendarEventId }).returning();
+        if (event) return json({ event }, 201);
+        const [existing] = await tx.select().from(events).where(eq(events.calendarEventId, calendarEventId));
+        return existing ? json({ event: existing }) : error("Atualize o calendário e tente novamente.", 409);
+      });
+    }
     if (action !== "update") {
       const [event] = await db.insert(events).values({ id: randomUUID(), ...details }).returning();
       return json({ event }, 201);

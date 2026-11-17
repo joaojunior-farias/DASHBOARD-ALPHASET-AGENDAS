@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, eq, lte } from "drizzle-orm";
 import { getDb } from "./db/index.js";
 import { photographers, photographerSessions } from "./db/schema.js";
@@ -41,8 +42,7 @@ export async function POST(request: Request) {
   }
 
   if (input.action === "cadastro") {
-    const id = await invitedParticipant(request);
-    if (!id) return json({ error: "Abra o link de convite da Alpha Set para criar sua conta." }, 403);
+    const id = await invitedParticipant(request) ?? randomUUID();
     const name = typeof input.name === "string" ? input.name.trim().replace(/\s+/gu, " ") : "";
     if (name.length < 2 || name.length > 80 || /[\u0000-\u001f\u007f]/u.test(name)) {
       return json({ error: "Informe um nome de 2 a 80 caracteres." }, 400);
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
       await tx.insert(photographerSessions).values(session.data);
       return true;
     });
-    if (!created) return json({ error: "Já existe uma conta para este e-mail ou convite deste navegador. Use Entrar." }, 409);
+    if (!created) return json({ error: "Já existe uma conta para este e-mail ou navegador. Use Entrar." }, 409);
     setPhotographerSession(result, site.origin, session.token);
   } else {
     const [account] = await db.select({ id: photographers.id, passwordHash: photographers.passwordHash, passwordSalt: photographers.passwordSalt })

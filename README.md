@@ -8,7 +8,9 @@ dashboard.alpha7studio.com.br ─┐
 agenda.alpha7studio.com.br ───┘
 ```
 
-O dashboard pede usuário e senha antes de mostrar eventos e respostas. A conta master cria usuários do painel. O primeiro acesso dos fotógrafos começa pelo convite da equipe, com cadastro de nome, e-mail e senha. Depois, o fotógrafo entra com e-mail e senha. As respostas ficam na conta, inclusive as anteriores quando o cadastro é feito no mesmo navegador que ainda tem o convite original.
+O dashboard pede usuário e senha antes de mostrar eventos e respostas. A conta master cria usuários do painel. Os fotógrafos podem criar conta com nome, e-mail e senha diretamente na página da agenda. Depois, entram com e-mail e senha. As respostas ficam na conta, inclusive as anteriores quando o cadastro é feito no navegador que ainda tem o convite original salvo.
+
+O **Calendário** do dashboard é a agenda interna de trabalho. A aba **Configurações** permite cadastrar categorias, modalidades, status com cores e tipos de trabalho. Em eventos esportivos, **Salvar e criar card** abre um rascunho na agenda da equipe com os dados do calendário preenchidos. O card aparece para os fotógrafos após a publicação na agenda da equipe.
 
 Rascunhos aparecem no dashboard. Ao publicar, o evento entra na lista de quem ainda precisa responder. Despublicar encerra as inscrições e mantém o evento no histórico de quem já respondeu. As respostas podem ser alteradas enquanto o evento estiver publicado.
 
@@ -76,4 +78,4 @@ npm ci
 npm run dev
 ```
 
-Abra o painel em http://localhost:3000. O convite da equipe aponta para http://127.0.0.1:3000. O frontend acessa internamente a API em http://127.0.0.1:3001. Ao editar o backend, rode `npm run build` de novo para que o processo em modo de desenvolvimento recarregue o JavaScript. Se você usa outro PostgreSQL local, ajuste o `DATABASE_URL` no backend e inicie esse banco em vez de executar `npm run db:local`.
+Abra o painel em http://localhost:3000 e a agenda dos fotógrafos em http://127.0.0.1:3000. O frontend acessa internamente a API em http://127.0.0.1:3001. Ao editar o backend, rode `npm run build` de novo para que o processo em modo de desenvolvimento recarregue o JavaScript. Se você usa outro PostgreSQL local, ajuste o `DATABASE_URL` no backend e inicie esse banco em vez de executar `npm run db:local`.

@@ -1,6 +1,31 @@
 import { sql } from "drizzle-orm";
-import { boolean, date, index, integer, numeric, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, boolean, date, index, integer, numeric, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { Period, Sport } from "../agenda-model.js";
+
+export const calendarOptions = pgTable("calendar_options", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  kind: text("kind").$type<"category" | "modality" | "status" | "work_type">().notNull(),
+  name: text("name").notNull(),
+  code: text("code").unique(),
+  parentId: uuid("parent_id").references((): AnyPgColumn => calendarOptions.id),
+  color: text("color").$type<"gray" | "blue" | "orange" | "green" | "purple" | "red">(),
+  cardSport: text("card_sport").$type<Sport>(),
+});
+
+export const calendarEvents = pgTable("calendar_events", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  clientName: text("client_name").notNull().default(""),
+  date: date("date", { mode: "string" }).notNull(),
+  time: text("time").notNull(),
+  location: text("location").notNull().default(""),
+  categoryId: uuid("category_id").notNull().references(() => calendarOptions.id),
+  modalityId: uuid("modality_id").references(() => calendarOptions.id),
+  statusId: uuid("status_id").notNull().references(() => calendarOptions.id),
+  workTypeId: uuid("work_type_id").notNull().references(() => calendarOptions.id),
+  distancesKm: numeric("distances_km", { mode: "number" }).array().notNull().default(sql`'{}'::numeric[]`),
+  version: integer("version").notNull().default(1),
+}, (table) => [index("calendar_events_date_time").on(table.date, table.time)]);
 
 export const events = pgTable("events", {
   id: uuid("id").primaryKey(),
@@ -15,6 +40,7 @@ export const events = pgTable("events", {
   sport: text("sport").$type<Sport>().notNull(),
   location: text("location"),
   dateRevision: integer("date_revision").notNull().default(1),
+  calendarEventId: uuid("calendar_event_id").unique().references(() => calendarEvents.id),
 }, (table) => [index("events_date_time").on(table.date, table.time)]);
 
 export const responses = pgTable("responses", {

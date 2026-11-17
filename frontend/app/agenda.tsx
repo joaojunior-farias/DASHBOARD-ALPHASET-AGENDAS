@@ -4,6 +4,7 @@ import {
   ArrowRight, Bike, CalendarDays, Check, Clock3, Footprints, Link2, LogOut,
   MapPin, Mountain, Pencil, Plus, Route, Shield, Trash2, Users, X,
 } from "lucide-react";
+import Link from "next/link";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   type AdminAgenda, type AdminEvent, type AdminReply, type AgendaEvent, type EventDetails,
@@ -33,13 +34,13 @@ const selectionMessages = {
 const selectionLabels = { pending: "Aguardando aprovação", confirmed: "Confirmado", declined: "Não confirmado" };
 const eventsPerPage = 3;
 
-class RequestError extends Error {
-  constructor(message: string, public status: number, public canRegister = false) { super(message); }
+export class RequestError extends Error {
+  constructor(message: string, public status: number) { super(message); }
 }
 
-async function apiRequest<T>(
+export async function apiRequest<T>(
   input?: Record<string, unknown>,
-  endpoint: "/api/agenda" | "/api/usuarios" | "/api/fotografos" = "/api/agenda",
+  endpoint: "/api/agenda" | "/api/usuarios" | "/api/fotografos" | "/api/calendario" | `/api/calendario?mes=${string}` = "/api/agenda",
 ) {
   const response = await fetch(endpoint, input ? {
     method: "POST",
@@ -50,12 +51,12 @@ async function apiRequest<T>(
   if (!response.ok) {
     const data = result && typeof result === "object" ? result as Record<string, unknown> : {};
     const message = typeof data.error === "string" ? data.error : "A agenda está indisponível. Tente novamente.";
-    throw new RequestError(message, response.status, data.canRegister === true);
+    throw new RequestError(message, response.status);
   }
   return result as T;
 }
 
-function TeamMark() {
+export function TeamMark() {
   return (
     <div className="brand">
       <img src="/alpha-set.png" alt="Alpha Set" width="480" height="192" />
@@ -70,6 +71,10 @@ function SportTag({ sport }: { sport: Sport }) {
 
 function formatDistance(km: number) {
   return String(km).replace(".", ",");
+}
+
+export function readDistances(values: FormData) {
+  return values.getAll("distanceKm").map(String).filter(Boolean).map((text) => Number(text.replace(",", ".")));
 }
 
 function EventMetadata({ event, showYear = false }: { event: AgendaEvent; showYear?: boolean }) {
@@ -159,7 +164,7 @@ function EventCard({ event, showYear, onReplies, onEdit, onRemove, onPublish, on
   );
 }
 
-export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManageUsers?: boolean }) {
+export function Agenda({ mode, canManageUsers = false, initialEventId }: { mode: Mode; canManageUsers?: boolean; initialEventId?: string }) {
   const admin = mode === "admin";
   const [adminData, setAdminData] = useState<AdminAgenda | null>(null);
   const [photoEvents, setPhotoEvents] = useState<PhotographerEvent[] | null>(null);
@@ -175,6 +180,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
   const [notice, setNotice] = useState("");
   const [mutation, setMutation] = useState(0);
   const version = useRef(0);
+  const initialCard = useRef(initialEventId);
   const listHeading = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
@@ -187,7 +193,15 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
       try {
         if (mode === "admin") {
           const data = await apiRequest<AdminAgenda>();
-          if (isCurrent()) setAdminData(data);
+          if (isCurrent()) {
+            setAdminData(data);
+            const card = data.events.find((event) => event.id === initialCard.current);
+            initialCard.current = undefined;
+            if (card) {
+              setMonth(card.date.slice(0, 7));
+              setPagePosition(card.id);
+            }
+          }
         } else {
           const token = new URLSearchParams(window.location.hash.slice(1)).get("convite");
           if (token) {
@@ -259,7 +273,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
     currentMonth, shiftMonth(currentMonth, 1), month, ...(pendingEvents ?? []).map((event) => event.date.slice(0, 7)),
   ])].sort();
   const selected = panel?.kind === "replies" ? adminData?.events.find((event) => event.id === panel.eventId) : undefined;
-  const invite = adminData?.invite ?? "";
+  const invite = adminData?.invite.split("#", 1)[0] ?? "";
   const reconfirmationsElsewhere = pendingEvents?.filter((event) => event.needsReconfirmation && !event.date.startsWith(month)) ?? [];
   const replyEvent = panel?.kind === "reply" ? photoEvents?.find((event) => event.id === panel.event.id) : undefined;
   const canStart = Boolean(events);
@@ -381,7 +395,8 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
           {admin ? (
             <div className="top-actions">
               <span className="role"><Shield size={15} /> Gestão</span>
-              {canStart && <button className="button outline invite-button" onClick={() => setPanel({ kind: "invite" })}><Link2 size={17} /> <span>Link da equipe</span></button>}
+              <Link className="button outline" href="/calendario"><CalendarDays size={17} /> Calendário</Link>
+              {canStart && <button className="button outline invite-button" onClick={() => setPanel({ kind: "invite" })}><Link2 size={17} /> <span>Link da agenda</span></button>}
               {canStart && <LogoutButton />}
             </div>
           ) : (
@@ -496,19 +511,19 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
           </section>
         ) : showTeamAccess ? (
           <section className="login-card team-access" aria-labelledby="team-access-title">
-            <h2 id="team-access-title">{creatingAccount && loadError.canRegister ? "Criar conta" : "Entrar na agenda"}</h2>
+            <h2 id="team-access-title">{creatingAccount ? "Criar conta" : "Entrar na agenda"}</h2>
             {inviteError && <p className="form-error" role="alert">{inviteError}</p>}
-            <TeamAccessForm key={creatingAccount && loadError.canRegister ? "register" : "login"}
-              creating={creatingAccount && loadError.canRegister} signedIn={() => {
+            <TeamAccessForm key={creatingAccount ? "register" : "login"}
+              creating={creatingAccount} signedIn={() => {
                 version.current += 1;
                 setCreatingAccount(false);
                 setInviteError("");
                 setLoadError(null);
                 setReload((value) => value + 1);
               }} />
-            {loadError.canRegister
-              ? <button className="text-button team-access-switch" onClick={() => setCreatingAccount(!creatingAccount)}>{creatingAccount ? "Já tenho conta" : "Criar conta com este convite"}</button>
-              : <p className="dialog-subtitle">Primeiro acesso? Abra o convite da Alpha Set para criar sua conta.</p>}
+            <button className="text-button team-access-switch" onClick={() => setCreatingAccount(!creatingAccount)}>
+              {creatingAccount ? "Já tenho conta" : "Criar conta"}
+            </button>
           </section>
         ) : (
           <section className="empty gate" aria-live="polite">
@@ -558,7 +573,7 @@ export function Agenda({ mode, canManageUsers = false }: { mode: Mode; canManage
   );
 }
 
-function LogoutButton({ photographer = false }: { photographer?: boolean }) {
+export function LogoutButton({ photographer = false }: { photographer?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
 
@@ -589,7 +604,7 @@ function LogoutButton({ photographer = false }: { photographer?: boolean }) {
   );
 }
 
-function Dialog({ close, children }: { close: () => void; children: React.ReactNode }) {
+export function Dialog({ close, children }: { close: () => void; children: React.ReactNode }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const node = dialog.current;
@@ -609,7 +624,7 @@ function Dialog({ close, children }: { close: () => void; children: React.ReactN
   );
 }
 
-function useSubmit() {
+export function useSubmit() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const pending = useRef(false);
@@ -686,32 +701,62 @@ function TeamAccessForm({ creating, signedIn }: { creating: boolean; signedIn: (
   );
 }
 
-function EventForm({ existing, month, save }: { existing?: AdminEvent; month: string; save: (values: EventDetails) => Promise<void> }) {
-  const [period, setPeriod] = useState<EventDetails["period"]>(existing?.period ?? "Manhã");
+export function DistanceFields({ initial }: { initial?: number[] }) {
   const [distances, setDistances] = useState(() => {
-    const values = existing?.distancesKm?.length ? existing.distancesKm.map(formatDistance) : [""];
+    const values = initial?.length ? initial.map(formatDistance) : [""];
     return values.map((text, id) => ({ id, text }));
   });
   const nextDistanceId = useRef(distances.length);
+  return (
+    <fieldset className="distance-fields">
+      <legend>Quilometragens</legend>
+      {distances.map(({ id, text }, index) => (
+        <div className="distance-row" key={id}>
+          <input name="distanceKm" aria-label={`Distância ${index + 1} em km`} type="text" inputMode="decimal" pattern={distancePattern}
+            placeholder="Ex. 5" value={text} onInput={(event) => {
+              const value = event.currentTarget.value;
+              setDistances((current) => current.map((distance) => distance.id === id ? { id, text: value } : distance));
+            }} />
+          <span>km</span>
+          <button className="button icon outline" type="button" aria-label={`Remover distância ${index + 1}`}
+            onClick={() => setDistances((current) => current.filter((distance) => distance.id !== id))}><X size={17} /></button>
+        </div>
+      ))}
+      <button className="button outline" type="button" onClick={() => {
+        const id = nextDistanceId.current++;
+        setDistances((current) => [...current, { id, text: "" }]);
+      }}><Plus size={17} />Adicionar distância</button>
+    </fieldset>
+  );
+}
+
+export function EventForm({ existing, defaults, month, save }: {
+  existing?: AdminEvent;
+  defaults?: Partial<EventDetails>;
+  month: string;
+  save: (values: EventDetails) => Promise<void>;
+}) {
+  const initialValues = existing ?? defaults;
+  const [period, setPeriod] = useState<EventDetails["period"]>(initialValues?.period ?? "Manhã");
   const { busy, error, submit } = useSubmit();
   const currentDate = today();
-  const initialDate = existing?.date ?? (currentDate.startsWith(month) ? currentDate : month + "-01");
+  const initialDate = initialValues?.date ?? (currentDate.startsWith(month) ? currentDate : month + "-01");
   const [date, setDate] = useState(initialDate);
   return (
     <form method="post" onSubmit={(event) => void submit(event, (values) => save({
       name: String(values.get("name")), date: String(values.get("date")), time: String(values.get("time")),
       meetingTime: String(values.get("meetingTime") ?? "") || null,
-      distancesKm: values.getAll("distanceKm").map(String).filter(Boolean).map((text) => Number(text.replace(",", "."))),
+      distancesKm: readDistances(values),
       period, sport: values.get("sport") as Sport, location: String(values.get("location")),
     }))}>
-      <h2 id="dialog-title">{existing ? "Editar evento" : "Novo evento"}</h2>
+      <h2 id="dialog-title">{existing ? "Editar evento" : defaults ? "Criar card para a equipe" : "Novo evento"}</h2>
       <div className="form-fields">
-        <label>Nome do evento<input autoFocus name="name" required minLength={2} maxLength={100} placeholder="Ex. Corrida no parque" defaultValue={existing?.name} /></label>
-        <label>Localização<input name="location" required minLength={2} maxLength={160} placeholder="Ex. Praia do Caripi, Barcarena" defaultValue={existing?.location ?? ""} /></label>
+        <label>Nome do evento<input autoFocus name="name" required minLength={2} maxLength={100} placeholder="Ex. Corrida no parque" defaultValue={initialValues?.name} /></label>
+        <label>Localização<input name="location" required minLength={2} maxLength={160} placeholder="Ex. Praia do Caripi, Barcarena" defaultValue={initialValues?.location ?? ""} /></label>
         <label>Data<input name="date" type="date" required min="2000-01-01" max="2099-12-31" defaultValue={initialDate} onInput={(event) => setDate(event.currentTarget.value)} /></label>
         <div className="field-row event-times">
-          <label>Horário de concentração<input name="meetingTime" type="time" defaultValue={existing?.meetingTime ?? ""} /></label>
-          <label>Horário de largada<input name="time" type="time" required defaultValue={existing?.time} onInput={(event) => {
+          <label>Horário de concentração<input name="meetingTime" type="time" defaultValue={initialValues?.meetingTime ?? ""} /></label>
+          <label>Horário de largada<input name="time" type="time" required defaultValue={initialValues?.time} onInput={(event) => {
             if (!existing && event.currentTarget.value) setPeriod(suggestedPeriod(event.currentTarget.value));
           }} /></label>
         </div>
@@ -719,30 +764,12 @@ function EventForm({ existing, month, save }: { existing?: AdminEvent; month: st
           <label>Período<select name="period" value={period} onChange={(event) => setPeriod(event.currentTarget.value as EventDetails["period"])}>
             {PERIODS.map((value) => <option key={value}>{value}</option>)}
           </select></label>
-          <label>Modalidade<select name="sport" required defaultValue={existing?.sport ?? ""}>
+          <label>Modalidade<select name="sport" required defaultValue={initialValues?.sport ?? ""}>
             <option value="" disabled>Selecione</option>
             {SPORTS.map((value) => <option key={value}>{value}</option>)}
           </select></label>
         </div>
-        <fieldset className="distance-fields">
-          <legend>Quilometragens</legend>
-          {distances.map(({ id, text }, index) => (
-            <div className="distance-row" key={id}>
-              <input name="distanceKm" aria-label={`Distância ${index + 1} em km`} type="text" inputMode="decimal" pattern={distancePattern}
-                placeholder="Ex. 5" value={text} onInput={(event) => {
-                  const value = event.currentTarget.value;
-                  setDistances((current) => current.map((distance) => distance.id === id ? { id, text: value } : distance));
-                }} />
-              <span>km</span>
-              <button className="button icon outline" type="button" aria-label={`Remover distância ${index + 1}`}
-                onClick={() => setDistances((current) => current.filter((distance) => distance.id !== id))}><X size={17} /></button>
-            </div>
-          ))}
-          <button className="button outline" type="button" onClick={() => {
-            const id = nextDistanceId.current++;
-            setDistances((current) => [...current, { id, text: "" }]);
-          }}><Plus size={17} />Adicionar distância</button>
-        </fieldset>
+        <DistanceFields initial={initialValues?.distancesKm} />
       </div>
       {existing && existing.published !== false && date && date !== existing.date && (
         <p className="date-alert" role="status"><CalendarDays size={16} /> Ao salvar a nova data, as respostas serão zeradas e a equipe precisará responder novamente.</p>
@@ -844,8 +871,7 @@ function InviteForm({ invite }: { invite: string }) {
   }
   return (
     <div>
-      <h2 id="dialog-title">Link da equipe</h2>
-      <p className="dialog-subtitle">Envie este link aos fotógrafos pelo WhatsApp.</p>
+      <h2 id="dialog-title">Link da agenda</h2>
       <div className="form-fields"><label>Link da agenda <input ref={field} readOnly value={invite} onFocus={(event) => event.currentTarget.select()} /></label></div>
       {copyError && <p className="form-error" role="alert">Selecione e copie o link acima.</p>}
       <div className="dialog-actions"><button className="button primary" onClick={() => void copy()}>{copied ? <Check size={18} /> : <Link2 size={18} />}{copied ? "Link copiado" : "Copiar link"}</button></div>

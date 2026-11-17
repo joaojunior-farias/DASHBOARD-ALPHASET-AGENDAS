@@ -4,7 +4,7 @@ import { requestSite } from "@/server/config";
 import { dashboardRole } from "@/server/dashboard-session";
 import { Agenda } from "./agenda";
 
-export default async function HomePage() {
+export default async function HomePage({ searchParams }: { searchParams: Promise<{ evento?: string | string[] }> }) {
   const incoming = await headers();
   const site = requestSite(incoming);
   if (!site) notFound();
@@ -12,5 +12,6 @@ export default async function HomePage() {
 
   const role = await dashboardRole(incoming);
   if (!role) redirect("/entrar");
-  return <Agenda mode="admin" canManageUsers={role === "master"} />;
+  const { evento } = await searchParams;
+  return <Agenda mode="admin" canManageUsers={role === "master"} initialEventId={typeof evento === "string" ? evento : undefined} />;
 }

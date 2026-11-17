@@ -1,6 +1,6 @@
 import { requestSite } from "./config";
 
-type Endpoint = "/api/agenda" | "/api/sessao" | "/api/usuarios" | "/api/fotografos";
+type Endpoint = "/api/agenda" | "/api/calendario" | "/api/sessao" | "/api/usuarios" | "/api/fotografos";
 type HeadersReader = Pick<Headers, "get">;
 
 function proxyError(message: string, status: number) {
@@ -30,7 +30,7 @@ async function readBody(request: Request) {
   }
 }
 
-export async function callBackend(incoming: HeadersReader, endpoint: Endpoint, body?: string) {
+export async function callBackend(incoming: HeadersReader, endpoint: Endpoint, body?: string, query?: URLSearchParams) {
   const site = requestSite(incoming);
   const allowedSite = endpoint === "/api/fotografos" ? "agenda" : "dashboard";
   if (!site || (endpoint !== "/api/agenda" && site.kind !== allowedSite)) {
@@ -55,7 +55,9 @@ export async function callBackend(incoming: HeadersReader, endpoint: Endpoint, b
       const value = incoming.get(name);
       if (value !== null) headers.set(name, value);
     }
-    const upstream = await fetch(new URL(endpoint, url), {
+    const target = new URL(endpoint, url);
+    if (query) target.search = query.toString();
+    const upstream = await fetch(target, {
       method: body === undefined ? "GET" : "POST",
       headers,
       body,

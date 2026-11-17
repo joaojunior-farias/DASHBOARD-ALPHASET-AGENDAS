@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { serve } from "@hono/node-server";
 import * as agenda from "./agenda.js";
+import * as calendar from "./calendar.js";
 import * as photographers from "./photographers.js";
 import * as session from "./session.js";
 import * as users from "./users.js";
@@ -28,6 +29,7 @@ function authorized(request: Request) {
 type Handler = (request: Request) => Response | Promise<Response>;
 const routes = new Map<string, { GET?: Handler; POST?: Handler }>([
   ["/api/agenda", agenda],
+  ["/api/calendario", calendar],
   ["/api/fotografos", photographers],
   ["/api/sessao", session],
   ["/api/usuarios", users],
