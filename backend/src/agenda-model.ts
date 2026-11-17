@@ -8,7 +8,6 @@ export type EventDetails = {
   date: string;
   time: string;
   meetingTime?: string | null;
-  photographerLimit?: number | null;
   distancesKm?: number[];
   period: Period;
   sport: Sport;

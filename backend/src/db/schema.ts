@@ -8,7 +8,6 @@ export const events = pgTable("events", {
   date: date("date", { mode: "string" }).notNull(),
   time: text("time").notNull(),
   meetingTime: text("meeting_time"),
-  photographerLimit: integer("photographer_limit"),
   distancesKm: numeric("distances_km", { mode: "number" }).array().notNull().default(sql`'{}'::numeric[]`),
   published: boolean("published").notNull().default(false),
   hasBeenPublished: boolean("has_been_published").notNull().default(false),
@@ -19,10 +18,12 @@ export const events = pgTable("events", {
 }, (table) => [index("events_date_time").on(table.date, table.time)]);
 
 export const responses = pgTable("responses", {
+  id: uuid("id").notNull().unique().defaultRandom(),
   eventId: uuid("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
   participantId: uuid("participant_id").notNull(),
   name: text("name").notNull(),
   available: boolean("available").notNull(),
+  selection: text("selection").$type<"confirmed" | "declined">(),
   dateRevision: integer("date_revision").notNull().default(1),
 }, (table) => [
   primaryKey({ columns: [table.eventId, table.participantId] }),
