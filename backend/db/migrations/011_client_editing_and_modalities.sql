@@ -1,0 +1,51 @@
+ALTER TABLE clients ADD COLUMN version integer NOT NULL DEFAULT 1;
+
+INSERT INTO calendar_options (kind, name, parent_id, card_sport)
+SELECT 'modality', presets.name, category.id, presets.card_sport
+FROM (VALUES
+  ('sports', 'Triatlo', NULL), ('sports', 'Duatlo', NULL), ('sports', 'Aquatlo', NULL),
+  ('sports', 'Aquabike', NULL), ('sports', 'Natação', NULL), ('sports', 'Maratona aquática', NULL),
+  ('sports', 'Patins', NULL), ('sports', 'Ciclismo de estrada', 'Bike'), ('sports', 'Gravel', 'Bike'),
+  ('sports', 'BMX', 'Bike'), ('sports', 'Downhill', 'Bike'), ('sports', 'Enduro MTB', 'Bike'),
+  ('sports', 'Maratona', 'Corrida'), ('sports', 'Meia maratona', 'Corrida'), ('sports', 'Corrida de rua', 'Corrida'),
+  ('sports', 'Corrida de obstáculos', 'Corrida'), ('sports', 'Corrida de aventura', 'Trilha'),
+  ('sports', 'Beach tennis', NULL), ('sports', 'Tênis', NULL), ('sports', 'Vôlei', NULL),
+  ('sports', 'Vôlei de praia', NULL), ('sports', 'Basquete', NULL), ('sports', 'Futsal', NULL),
+  ('sports', 'Futebol society', NULL), ('sports', 'Handebol', NULL), ('sports', 'Rugby', NULL),
+  ('sports', 'Surfe', NULL), ('sports', 'Stand up paddle', NULL), ('sports', 'Canoagem', NULL),
+  ('sports', 'Remo', NULL), ('sports', 'Skate', NULL), ('sports', 'Escalada', NULL),
+  ('sports', 'Ginástica', NULL), ('sports', 'Atletismo', NULL), ('sports', 'Jiu-jítsu', NULL),
+  ('sports', 'Judô', NULL), ('sports', 'Karatê', NULL), ('sports', 'Boxe', NULL),
+  ('sports', 'Muay Thai', NULL), ('sports', 'MMA', NULL), ('sports', 'Fisiculturismo', NULL),
+  ('sports', 'Levantamento de peso', NULL), ('sports', 'Dança esportiva', NULL),
+  ('birthday', 'Festa de 1 ano', NULL), ('birthday', 'Festa de 18 anos', NULL),
+  ('birthday', 'Festa de 50 anos', NULL), ('birthday', 'Festa surpresa', NULL),
+  ('birthday', 'Aniversário de casamento', NULL), ('birthday', 'Mesversário', NULL),
+  ('birthday', 'Smash the cake', NULL), ('birthday', 'Ensaio de aniversário', NULL),
+  ('wedding', 'Pedido de casamento', NULL), ('wedding', 'Noivado', NULL),
+  ('wedding', 'Making of da noiva', NULL), ('wedding', 'Making of do noivo', NULL),
+  ('wedding', 'Cerimônia ao ar livre', NULL), ('wedding', 'Festa de casamento', NULL),
+  ('wedding', 'Destination wedding', NULL), ('wedding', 'Elopement wedding', NULL),
+  ('wedding', 'Pós-wedding', NULL), ('wedding', 'Bodas', NULL),
+  ('corporate', 'Congresso', NULL), ('corporate', 'Conferência', NULL),
+  ('corporate', 'Seminário', NULL), ('corporate', 'Palestra', NULL), ('corporate', 'Workshop', NULL),
+  ('corporate', 'Convenção', NULL), ('corporate', 'Feira e exposição', NULL),
+  ('corporate', 'Inauguração', NULL), ('corporate', 'Lançamento de produto', NULL),
+  ('corporate', 'Confraternização', NULL), ('corporate', 'Premiação', NULL),
+  ('corporate', 'Retrato corporativo', NULL), ('corporate', 'Fotografia institucional', NULL),
+  ('corporate', 'Fotografia de produtos', NULL), ('corporate', 'Fotografia gastronômica', NULL),
+  ('shoot', 'Família', NULL), ('shoot', 'Infantil', NULL), ('shoot', 'Bebê', NULL),
+  ('shoot', 'Acompanhamento infantil', NULL), ('shoot', 'Feminino', NULL), ('shoot', 'Masculino', NULL),
+  ('shoot', 'Retrato profissional', NULL), ('shoot', 'Moda', NULL), ('shoot', 'Editorial', NULL),
+  ('shoot', 'Lifestyle', NULL), ('shoot', 'Pet', NULL), ('shoot', 'Ensaio externo', NULL),
+  ('shoot', 'Ensaio temático', NULL), ('shoot', 'Ensaio de dança', NULL),
+  ('freelance', 'Segundo fotógrafo', NULL), ('freelance', 'Fotógrafo principal', NULL),
+  ('freelance', 'Assistente de fotografia', NULL), ('freelance', 'Cobertura de evento', NULL),
+  ('freelance', 'Fotojornalismo', NULL), ('freelance', 'Show e festival', NULL),
+  ('freelance', 'Making of', NULL), ('freelance', 'Fotografia imobiliária', NULL),
+  ('freelance', 'Fotografia de arquitetura', NULL), ('freelance', 'Fotografia de produtos', NULL),
+  ('freelance', 'Captação de vídeo', NULL), ('freelance', 'Operação de drone', NULL),
+  ('freelance', 'Edição de fotos', NULL), ('freelance', 'Edição de vídeo', NULL)
+) AS presets(category_code, name, card_sport)
+JOIN calendar_options AS category ON category.code = presets.category_code
+ON CONFLICT DO NOTHING;

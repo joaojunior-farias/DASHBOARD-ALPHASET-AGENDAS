@@ -17,6 +17,7 @@ export const clients = pgTable("clients", {
   name: text("name").notNull(),
   email: text("email").notNull().default(""),
   phone: text("phone").notNull().default(""),
+  version: integer("version").notNull().default(1),
 }, (table) => [index("clients_name").on(sql`lower(${table.name})`)]);
 
 export const calendarEvents = pgTable("calendar_events", {

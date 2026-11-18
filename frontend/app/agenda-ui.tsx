@@ -9,7 +9,7 @@ export class RequestError extends Error {
 
 export async function apiRequest<T>(
   input?: Record<string, unknown>,
-  endpoint: "/api/clientes" | "/api/agenda" | "/api/sessao" | "/api/perfil" | "/api/usuarios" | "/api/fotografos" | "/api/calendario" | `/api/calendario?mes=${string}` = "/api/agenda",
+  endpoint: `/api/clientes?busca=${string}` | "/api/clientes" | "/api/agenda" | "/api/sessao" | "/api/perfil" | "/api/usuarios" | "/api/fotografos" | "/api/calendario" | `/api/calendario?mes=${string}` = "/api/agenda",
 ) {
   const response = await fetch(endpoint, input ? {
     method: "POST",

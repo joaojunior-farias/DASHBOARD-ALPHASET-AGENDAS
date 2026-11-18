@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Check, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { calendarDays, datesInGrid, eventTimeLabel, weeklyLabel, type CalendarEvent } from "./calendar-model";
+import { ModalityPicker } from "./modality-picker";
 import { ClientPicker } from "./client-picker";
 import { DashboardShell } from "../dashboard-shell";
 import { DistanceFields, EventForm, readDistances } from "../agenda";
@@ -90,14 +91,16 @@ export function WorkCalendar({ settings, statusId }: { settings: boolean; status
       ...current,
       events: [
         ...current.events.filter((item) => item.id !== event.id),
-        ...(eventMonth === current.month ? [event] : []),
+        ...(eventMonth <= current.month && event.endDate.slice(0, 7) >= current.month ? [event] : []),
       ].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)),
     });
-    selectMonth(eventMonth);
+    if (!makeCard && (eventMonth > month || event.endDate.slice(0, 7) < month)) selectMonth(eventMonth);
     setReload((value) => value + 1);
     setNotice(createdCount && createdCount > 1 ? `${createdCount} ocorrências criadas no calendário.` : "Evento salvo no calendário.");
-    if (makeCard && event.cardId) window.location.assign(`/?evento=${event.cardId}`);
-    else setPanel(makeCard ? { kind: "card", event } : null);
+    if (makeCard && event.cardId) {
+      setPanel(null);
+      setNotice("O evento já possui um card.");
+    } else setPanel(makeCard ? { kind: "card", event } : null);
   }
 
   async function createOption(values: Record<string, unknown>) {
@@ -111,7 +114,12 @@ export function WorkCalendar({ settings, statusId }: { settings: boolean; status
 
   async function saveCard(event: CalendarEvent, values: EventDetails) {
     const { event: card } = await apiRequest<{ event: { id: string } }>({ ...values, action: "create-calendar-card", calendarEventId: event.id });
-    window.location.assign(`/?evento=${card.id}`);
+    setLoaded((current) => current && {
+      ...current, events: current.events.map((item) => item.id === event.id ? { ...item, cardId: card.id } : item),
+    });
+    setPanel(null);
+    setNotice("Card criado como rascunho.");
+    setReload((value) => value + 1);
   }
 
   return (
@@ -211,6 +219,7 @@ function CalendarEditor({ editor, options, statusId, save }: {
   const [time, setTime] = useState(existing?.allDay ? "" : existing?.time ?? "");
   const [endTime, setEndTime] = useState(existing?.endTime ?? "");
   const [recurrence, setRecurrence] = useState("none");
+  const [clientBusy, setClientBusy] = useState(false);
   const [categoryId, setCategoryId] = useState(existing?.categoryId ?? "");
   const [modalityId, setModalityId] = useState(existing?.modalityId ?? "");
   const { busy, error, submit } = useSubmit();
@@ -221,6 +230,7 @@ function CalendarEditor({ editor, options, statusId, save }: {
   const workTypes = options.filter((option) => option.kind === "work_type");
   return (
     <form method="post" onSubmit={(event) => {
+      if (clientBusy) { event.preventDefault(); return; }
       const intent = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("value");
       void submit(event, (fields) => save({
         name: fields.get("name"), clientId: fields.get("clientId") || null, clientName: fields.get("clientName"),
@@ -234,7 +244,7 @@ function CalendarEditor({ editor, options, statusId, save }: {
       <div className="form-fields">
         {existing && <p className="dialog-subtitle">{describeDate(existing.date).dayMonth} de {existing.date.slice(0, 4)}{existing.endDate && existing.endDate !== existing.date && ` até ${describeDate(existing.endDate).dayMonth} de ${existing.endDate.slice(0, 4)}`}</p>}
         <label>Nome do evento<input autoFocus name="name" required minLength={2} maxLength={100} defaultValue={existing?.name} /></label>
-        <ClientPicker initialId={existing?.clientId} initialName={existing?.clientName} />
+        <ClientPicker initialId={existing?.clientId} initialName={existing?.clientName} onBusyChange={setClientBusy} />
         <div className="field-row">
           <label>Data de início<input name="date" type="date" required min="2000-01-01" max="2099-12-31" value={date} onChange={(event) => {
             const next = event.currentTarget.value;
@@ -261,9 +271,7 @@ function CalendarEditor({ editor, options, statusId, save }: {
             setCategoryId(event.currentTarget.value);
             setModalityId("");
           }}><option value="" disabled>Selecione</option>{categories.map(({ id, name }) => <option value={id} key={id}>{name}</option>)}</select></label>
-          <label>Modalidade<select name="modalityId" value={modalityId} onChange={(event) => setModalityId(event.currentTarget.value)}>
-            <option value="">Sem modalidade</option>{modalities.map(({ id, name }) => <option value={id} key={id}>{name}</option>)}
-          </select></label>
+          <ModalityPicker key={categoryId} options={modalities} value={modalityId} onChange={setModalityId} />
         </div>
         <div className="field-row">
           <label>Status<select name="statusId" required defaultValue={existing?.statusId ?? statusId ?? statuses.find((option) => option.code === "quote")?.id}>
@@ -278,8 +286,8 @@ function CalendarEditor({ editor, options, statusId, save }: {
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="dialog-actions">
         {existing?.cardId && <Link className="button outline" href={`/?evento=${existing.cardId}`}>Abrir card <ArrowRight size={17} /></Link>}
-        <button className="button primary" type="submit" disabled={busy}>{busy ? "Salvando…" : "Salvar evento"} <Check size={17} /></button>
-        {sports && !existing?.cardId && <button className="button outline" type="submit" value="card" disabled={busy}>Salvar e criar card</button>}
+        <button className="button primary" type="submit" disabled={busy || clientBusy}>{busy ? "Salvando…" : "Salvar evento"} <Check size={17} /></button>
+        {sports && !existing?.cardId && <button className="button outline" type="submit" value="card" disabled={busy || clientBusy}>Salvar e criar card</button>}
       </div>
     </form>
   );
@@ -316,16 +324,13 @@ function CatalogGroup({ group, options, save }: {
           <button className="button primary" disabled={busy}>{busy ? "Salvando…" : group.action}</button></div>
       </form>}
       <div className="calendar-catalog-select">
-        <select aria-label={`Opções de ${group.title.toLowerCase()}`} value={selectedId} onChange={(event) => setSelectedId(event.currentTarget.value)}>
-          <option value="" disabled>Ver opções cadastradas</option>
-          {group.kind === "modality" ? categories.map((category) => {
-            const modalities = entries.filter((entry) => entry.parentId === category.id);
-            if (!modalities.length) return null;
-            return <optgroup key={category.id} label={category.name}>
-              {modalities.map(({ id, name }) => <option value={id} key={id}>{name}</option>)}
-            </optgroup>;
-          }) : entries.map(({ id, name }) => <option value={id} key={id}>{name}</option>)}
-        </select>
+        {group.kind === "modality" ? <ModalityPicker label="Modalidades cadastradas" value={selectedId} onChange={setSelectedId}
+          options={entries.map((entry) => ({ ...entry, detail: categories.find((category) => category.id === entry.parentId)?.name }))} /> : (
+          <select aria-label={`Opções de ${group.title.toLowerCase()}`} value={selectedId} onChange={(event) => setSelectedId(event.currentTarget.value)}>
+            <option value="" disabled>Ver opções cadastradas</option>
+            {entries.map(({ id, name }) => <option value={id} key={id}>{name}</option>)}
+          </select>
+        )}
         {color && <span className="calendar-color-dot" data-color={color} role="img" aria-label={colorLabels[color]} />}
       </div>
     </section>

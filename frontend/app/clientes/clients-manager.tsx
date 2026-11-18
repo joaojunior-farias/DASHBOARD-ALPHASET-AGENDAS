@@ -1,15 +1,15 @@
 "use client";
 
-import { Check, Plus } from "lucide-react";
+import { Check, Pencil, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { apiRequest, Dialog, RequestError, useSubmit } from "../agenda-ui";
 import { DashboardShell } from "../dashboard-shell";
 
-export type Client = { id: string; name: string; email: string; phone: string };
+export type Client = { id: string; name: string; email: string; phone: string; version: number };
 
 export function ClientsManager() {
   const [clients, setClients] = useState<Client[] | null>(null);
-  const [adding, setAdding] = useState(false);
+  const [panel, setPanel] = useState<"create" | Client | null>(null);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -37,7 +37,7 @@ export function ClientsManager() {
   return <DashboardShell area="clients">
     <main className="main users-page">
       <div className="users-heading"><h1>Clientes</h1>
-        <button className="button primary" onClick={() => setAdding(true)}><Plus size={17} /> Cadastrar cliente</button>
+        <button className="button primary" onClick={() => setPanel("create")}><Plus size={17} /> Cadastrar cliente</button>
       </div>
       {error && <p className="form-error" role="alert">{error} <button className="text-button" onClick={() => setReload((value) => value + 1)}>Tentar novamente</button></p>}
       {!clients && !error && <p className="dialog-subtitle" role="status">Carregando clientes…</p>}
@@ -45,30 +45,37 @@ export function ClientsManager() {
         <div className="form-fields"><label>Buscar cliente<input type="search" value={search} onChange={(event) => setSearch(event.currentTarget.value)} /></label></div>
         {matches?.length ? <ul className="users-list">{matches.map((client) => <li key={client.id}>
           <div><strong>{client.name}</strong>{client.email && <small>{client.email}</small>}{client.phone && <small>{client.phone}</small>}</div>
+          <button className="button outline" aria-label={`Editar ${client.name}`} onClick={() => setPanel(client)}><Pencil size={16} /> Editar</button>
         </li>)}</ul> : <p className="dialog-subtitle">{clients.length ? "Nenhum cliente encontrado." : "Cadastre seu primeiro cliente para selecioná-lo nos eventos."}</p>}
       </section>}
     </main>
-    {adding && <Dialog close={() => setAdding(false)}><ClientForm save={async (values) => {
-      await apiRequest(values, "/api/clientes");
-      setReload((value) => value + 1);
-      setAdding(false);
-      setNotice("Cliente cadastrado.");
-    }} /></Dialog>}
+    {panel && <Dialog close={() => setPanel(null)}><ClientForm key={panel === "create" ? "create" : panel.id}
+      existing={panel === "create" ? undefined : panel} save={async (values) => {
+        try {
+          await apiRequest(values, "/api/clientes");
+        } catch (cause) {
+          if (cause instanceof RequestError && cause.status === 409) setReload((value) => value + 1);
+          throw cause;
+        }
+        setReload((value) => value + 1);
+        setPanel(null);
+        setNotice(panel === "create" ? "Cliente cadastrado." : "Dados do cliente atualizados.");
+      }} /></Dialog>}
     {notice && <div className="toast" role="status"><Check size={18} />{notice}</div>}
   </DashboardShell>;
 }
 
-function ClientForm({ save }: { save: (values: Record<string, unknown>) => Promise<void> }) {
-  const [id] = useState(() => crypto.randomUUID());
+function ClientForm({ existing, save }: { existing?: Client; save: (values: Record<string, unknown>) => Promise<void> }) {
+  const [id] = useState(() => existing?.id ?? crypto.randomUUID());
   const { busy, error, submit } = useSubmit();
   return <form method="post" onSubmit={(event) => void submit(event, (fields) => save({
-    id, name: fields.get("name"), email: fields.get("email"), phone: fields.get("phone"),
+    id, action: existing ? "update" : "create", version: existing?.version, name: fields.get("name"), email: fields.get("email"), phone: fields.get("phone"),
   }))}>
-    <h2 id="dialog-title">Cadastrar cliente</h2>
+    <h2 id="dialog-title">{existing ? "Editar cliente" : "Cadastrar cliente"}</h2>
     <div className="form-fields">
-      <label>Nome do cliente<input name="name" autoFocus required minLength={2} maxLength={100} autoComplete="name" /></label>
-      <label>E-mail <span className="field-optional">opcional</span><input name="email" type="email" maxLength={254} autoComplete="email" /></label>
-      <label>Telefone <span className="field-optional">opcional</span><input name="phone" type="tel" maxLength={40} autoComplete="tel" /></label>
+      <label>Nome do cliente<input name="name" autoFocus required minLength={2} maxLength={100} autoComplete="name" defaultValue={existing?.name} /></label>
+      <label>E-mail <span className="field-optional">opcional</span><input name="email" type="email" maxLength={254} autoComplete="email" defaultValue={existing?.email} /></label>
+      <label>Telefone <span className="field-optional">opcional</span><input name="phone" type="tel" maxLength={40} autoComplete="tel" defaultValue={existing?.phone} /></label>
     </div>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="dialog-actions"><button className="button primary" disabled={busy}>{busy ? "Salvando…" : "Salvar cliente"}</button></div>

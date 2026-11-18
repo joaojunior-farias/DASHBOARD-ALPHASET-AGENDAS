@@ -10,7 +10,7 @@ agenda.alpha7studio.com.br ───┘
 
 O dashboard pede usuário e senha antes de mostrar eventos e respostas. A conta master cria usuários do painel. Os fotógrafos podem criar conta com nome, e-mail e senha diretamente na página da agenda. Depois, entram com e-mail e senha. As respostas ficam na conta, inclusive as anteriores quando o cadastro é feito no navegador que ainda tem o convite original salvo.
 
-Em **Clientes**, cadastre o nome e, se desejar, e-mail e telefone. Ao criar ou editar um evento do calendário, selecione um cliente cadastrado ou escolha **Digitar nome do cliente**. O cadastro pode ser aberto em outra aba pelo próprio formulário.
+Em **Clientes**, cadastre o nome e, se desejar, e-mail e telefone. Ao criar ou editar um evento do calendário, digite o nome do cliente para buscar até três sugestões. Quando o cliente ainda não estiver cadastrado, clique em **Cadastrar** no próprio formulário. Na página **Clientes**, use **Editar** para completar ou corrigir nome, e-mail e telefone.
 
 No calendário, **Data de início** e **Data de fim** incluem os dois dias e mostram o evento em todos os dias do intervalo, inclusive quando ele atravessa meses. Marque **Dia inteiro** ou preencha o horário de início e, opcionalmente, o horário de fim.
 
@@ -20,7 +20,7 @@ Em **Gestão da equipe**, use **Encerrar** para fechar as inscrições e manter 
 
 Em **Usuários**, a conta master pode resetar senhas de operadores e fotógrafos. Defina `USER_RESET_PASSWORD` no backend com 12 a 256 caracteres. Ao resetar, as sessões anteriores são encerradas e, no próximo login, a pessoa precisa usar a senha temporária e cadastrar uma senha própria.
 
-O **Calendário** do dashboard é a agenda interna de trabalho. A aba **Configurações** permite cadastrar categorias, modalidades, status com cores e tipos de trabalho. Em eventos esportivos, **Salvar e criar card** abre um rascunho na agenda da equipe com os dados do calendário preenchidos. O card aparece para os fotógrafos após a publicação na agenda da equipe.
+O **Calendário** do dashboard é a agenda interna de trabalho. A aba **Configurações** permite cadastrar categorias, modalidades, status com cores e tipos de trabalho. Em eventos esportivos, **Salvar e criar card** abre um rascunho na agenda da equipe com os dados do calendário preenchidos. A criação do card mantém o mês aberto do calendário. O card aparece para os fotógrafos após a publicação na agenda da equipe. As modalidades têm busca por digitação, com até três sugestões da categoria selecionada.
 
 Rascunhos aparecem no dashboard. Ao publicar, o evento entra na lista de quem ainda precisa responder. Despublicar encerra as inscrições e mantém o evento no histórico de quem já respondeu. As respostas podem ser alteradas enquanto o evento estiver publicado.
 

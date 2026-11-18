@@ -59,3 +59,6 @@
 .form-fields .calendar-check input { width: 20px; height: 20px; min-height: 20px; accent-color: var(--orange); }
 .calendar-slot .calendar-slot-time { flex-shrink: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .calendar-slot[data-continuation="true"] { border-inline-start-style: dashed; }
+
+.calendar-catalog-select > div { flex: 1; min-width: 0; }
+.calendar-catalog-select .search-select-panel { width: 100%; }

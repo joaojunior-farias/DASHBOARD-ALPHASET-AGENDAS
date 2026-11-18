@@ -38,12 +38,13 @@ export async function GET(request: Request) {
   const db = getDb();
   const [options, rows] = await Promise.all([
     db.select().from(calendarOptions).orderBy(asc(calendarOptions.name)),
-    db.select({ event: calendarEvents, cardId: events.id }).from(calendarEvents)
+    db.select({ event: calendarEvents, cardId: events.id, clientName: clients.name }).from(calendarEvents)
       .leftJoin(events, eq(events.calendarEventId, calendarEvents.id))
+      .leftJoin(clients, eq(clients.id, calendarEvents.clientId))
       .where(and(gte(calendarEvents.endDate, start), lt(calendarEvents.date, end)))
       .orderBy(asc(calendarEvents.date), asc(calendarEvents.time), asc(calendarEvents.id)),
   ]);
-  return json({ options, events: rows.map(({ event, cardId }) => ({ ...event, cardId })) });
+  return json({ options, events: rows.map(({ event, cardId, clientName }) => ({ ...event, clientName: clientName ?? event.clientName, cardId })) });
 }
 
 export async function POST(request: Request) {
