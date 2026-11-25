@@ -187,22 +187,36 @@ export async function POST(request: Request) {
       ? error("A data do evento mudou. Reabra o evento para editar a versão atual.", 409)
       : error("Este evento foi removido da agenda.", 404);
   }
-  if (action === "select-team") {
-    const { version, confirmedIds } = input;
+  if (action === "select-team" || action === "review-reply") {
+    const individual = action === "review-reply";
+    const { version, replyId } = input;
+    const decision = input.selection === "confirmed" || input.selection === "declined" ? input.selection : null;
+    const confirmedIds = Array.isArray(input.confirmedIds) ? input.confirmedIds : [];
+    const validChoice = individual
+      ? typeof replyId === "string" && uuidPattern.test(replyId) && decision !== null
+      : Array.isArray(input.confirmedIds) && confirmedIds.every((id) => typeof id === "string" && uuidPattern.test(id));
     if (typeof eventId !== "string" || !uuidPattern.test(eventId) || !isPositiveInteger(dateRevision)
       || typeof version !== "string" || !/^[a-f0-9]{64}$/.test(version)
-      || !Array.isArray(confirmedIds) || !confirmedIds.every((id) => typeof id === "string" && uuidPattern.test(id))) {
+      || !validChoice) {
       return error("Confira a seleção de fotógrafos.", 400);
     }
     return db.transaction(async (tx) => {
       const [event] = await tx.select({ dateRevision: events.dateRevision, closed: events.closed })
         .from(events).where(eq(events.id, eventId)).for("no key update");
       if (!event) return error("Este evento foi removido da agenda.", 404);
-      if (event.closed) return error("O card foi encerrado. Abra a escala para editar a equipe.", 409);
+      if (event.closed && !individual) return error("O card foi encerrado. Abra a escala para editar a equipe.", 409);
       const candidateFilter = and(eq(responses.eventId, eventId), eq(responses.dateRevision, dateRevision), or(eq(responses.available, true), eq(responses.assignedByAdmin, true)));
       const candidates = await tx.select(adminResponseFields).from(responses).where(candidateFilter);
       if (event.dateRevision !== dateRevision || selectionVersion(candidates) !== version) {
         return error("As inscrições ou a seleção mudaram. Reabra a seleção para ver a lista atual.", 409);
+      }
+      if (individual) {
+        const candidate = candidates.find((reply) => reply.id === replyId && reply.available);
+        if (!candidate) return error("Este fotógrafo não está inscrito na data atual deste evento.", 409);
+        const [updated] = await tx.update(responses).set({ selection: decision })
+          .where(and(candidateFilter, eq(responses.id, candidate.id))).returning(adminResponseFields);
+        const current = candidates.map((reply) => reply.id === updated.id ? updated : reply);
+        return json({ replies: [updated], selectionVersion: selectionVersion(current) });
       }
       const candidateIds = new Set(candidates.map(({ id }) => id));
       if (confirmedIds.some((id) => !candidateIds.has(id))) return error("Escolha fotógrafos inscritos neste evento.", 400);

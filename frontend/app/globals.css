@@ -375,3 +375,21 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .search-select-panel > p { margin: 7px; color: var(--muted); font-size: 13px; }
 .search-select-panel .search-select-create { width: 100%; margin-top: 4px; overflow-wrap: anywhere; }
 .search-select-panel .form-error { color: var(--danger); }
+
+button.count { appearance: none; border: 1px solid transparent; font-family: inherit; cursor: pointer; min-height: 34px; }
+button.count:hover { border-color: currentColor; }
+.registration-list { margin-top: 16px; }
+.registration-list > ul { list-style: none; margin: 0; padding: 0; }
+.registration-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.registration-name { display: grid; gap: 4px; min-width: 0; flex: 1 1 150px; overflow-wrap: anywhere; font-size: 14px; }
+.registration-status { font-size: 12px; color: var(--muted); }
+.registration-status.confirmed, .registration-actions .approve { color: #2f5939; }
+.registration-status.declined { color: var(--danger); }
+.registration-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.registration-actions button:disabled { cursor: default; }
+.registration-empty { margin: 20px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+@media (max-width: 600px) {
+  button.count { min-height: 44px; }
+  .registration-actions { width: 100%; }
+  .registration-actions .button { flex: 1; }
+}

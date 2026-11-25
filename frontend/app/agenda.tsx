@@ -17,10 +17,13 @@ import {
 type Mode = "admin" | "photographer";
 type PhotoView = "pending" | "history";
 type AnswerFilter = "all" | "confirmed" | "declined" | "available" | "unavailable";
+type RegistrationDecision = { replyId: string; selection: "confirmed" | "declined" };
+type RegistrationView = "available" | "unavailable";
 type PublicationAction = "publish" | "unpublish" | "close" | "reopen";
 type Panel =
   | { kind: "event"; event?: AdminEvent }
   | { kind: "replies"; eventId: string }
+  | { kind: "registrations"; eventId: string; view: RegistrationView }
   | { kind: "reply"; event: PhotographerEvent; available?: boolean }
   | { kind: "invite" }
   | { kind: "remove"; event: AdminEvent; fromReplies?: boolean };
@@ -63,10 +66,11 @@ function EventMetadata({ event, showYear = false }: { event: AgendaEvent; showYe
   );
 }
 
-function EventCard({ event, showYear, onReplies, onEdit, onRemove, onPublish, onReply }: {
+function EventCard({ event, showYear, onReplies, onRegistrations, onEdit, onRemove, onPublish, onReply }: {
   event: AdminEvent | PhotographerEvent;
   showYear: boolean;
   onReplies: (eventId: string) => void;
+  onRegistrations: (eventId: string, view: RegistrationView) => void;
   onEdit: (event: AdminEvent) => void;
   onRemove: (event: AdminEvent) => void;
   onPublish: (eventId: string, action: PublicationAction) => Promise<void>;
@@ -98,9 +102,11 @@ function EventCard({ event, showYear, onReplies, onEdit, onRemove, onPublish, on
           <PublicationForm published={published} closed={closed} hasBeenPublished={hasBeenPublished} save={(action) => onPublish(event.id, action)} />
           {hasBeenPublished && (
             <div className="card-counts">
-              <span className="count registered"><Users size={15} /> {available} <span>inscritos</span></span>
+              <button type="button" className="count registered" aria-label={`Ver ${available} inscritos em ${event.name}`}
+                onClick={() => onRegistrations(event.id, "available")}><Users size={15} /> {available} <span>inscritos</span></button>
               <span className="count available"><Check size={15} /> {confirmed + (event.manual?.length ?? 0)} <span>{closed ? "escalados" : "confirmados"}</span></span>
-              <span className="count unavailable"><X size={15} /> {unavailable} <span>indisponíveis</span></span>
+              <button type="button" className="count unavailable" aria-label={`Ver ${unavailable} indisponíveis em ${event.name}`}
+                onClick={() => onRegistrations(event.id, "unavailable")}><X size={15} /> {unavailable} <span>indisponíveis</span></button>
             </div>
           )}
           <div className="event-admin-actions">
@@ -254,7 +260,7 @@ export function Agenda({ mode, initialEventId, initialPanel, closedOnly = false 
   const photoMonths = [...new Set([
     currentMonth, shiftMonth(currentMonth, 1), month, ...(pendingEvents ?? []).map((event) => event.date.slice(0, 7)),
   ])].sort();
-  const selected = panel?.kind === "replies" ? adminData?.events.find((event) => event.id === panel.eventId) : undefined;
+  const selected = panel?.kind === "replies" || panel?.kind === "registrations" ? adminData?.events.find((event) => event.id === panel.eventId) : undefined;
   const invite = adminData?.invite.split("#", 1)[0] ?? "";
   const reconfirmationsElsewhere = pendingEvents?.filter((event) => event.needsReconfirmation && !event.date.startsWith(month)) ?? [];
   const replyEvent = panel?.kind === "reply" ? photoEvents?.find((event) => event.id === panel.event.id) : undefined;
@@ -333,9 +339,11 @@ export function Agenda({ mode, initialEventId, initialPanel, closedOnly = false 
     finish("Disponibilidade enviada para a Alpha Set.");
   }
 
-  async function saveSelection(event: AdminEvent, confirmedIds: string[]) {
+  async function saveSelection(event: AdminEvent, choice: string[] | RegistrationDecision) {
+    const bulk = Array.isArray(choice);
     const { replies, selectionVersion } = await apiRequest<{ replies: AdminReply[]; selectionVersion: string }>({
-      action: "select-team", eventId: event.id, dateRevision: event.dateRevision, version: event.selectionVersion, confirmedIds,
+      ...(bulk ? { action: "select-team", confirmedIds: choice } : { action: "review-reply", ...choice }),
+      eventId: event.id, dateRevision: event.dateRevision, version: event.selectionVersion,
     }).catch(refreshOnConflict);
     const decisions = new Map(replies.map((reply) => [reply.id, reply.selection]));
     setAdminData((data) => data && {
@@ -345,7 +353,7 @@ export function Agenda({ mode, initialEventId, initialPanel, closedOnly = false 
         replies: item.replies.map((reply) => decisions.has(reply.id) ? { ...reply, selection: decisions.get(reply.id) ?? null } : reply),
       } : item),
     });
-    finish("Seleção salva.");
+    finish(bulk ? "Seleção salva." : choice.selection === "confirmed" ? "Fotógrafo aprovado para o evento." : "Fotógrafo não confirmado para o evento.", bulk);
   }
 
   async function removeEvent(id: string) {
@@ -451,6 +459,7 @@ export function Agenda({ mode, initialEventId, initialPanel, closedOnly = false 
                 <div className="event-grid">
                   {visibleEntries.map((event) => <EventCard key={event.id} event={event} showYear={history}
                     onReplies={(eventId) => setPanel({ kind: "replies", eventId })}
+                    onRegistrations={(eventId, view) => setPanel({ kind: "registrations", eventId, view })}
                     onEdit={(event) => setPanel({ kind: "event", event })}
                     onRemove={(event) => setPanel({ kind: "remove", event })}
                     onPublish={publishEvent}
@@ -535,7 +544,15 @@ export function Agenda({ mode, initialEventId, initialPanel, closedOnly = false 
               </div>
             </div>
           )}
-          {panel.kind === "replies" && !selected && <h2 id="dialog-title">Evento removido</h2>}
+          {panel.kind === "registrations" && selected && (
+            <div>
+              <h2 id="dialog-title">{panel.view === "available" ? "Inscritos" : "Indisponíveis"}</h2>
+              <p className="dialog-subtitle">{selected.name}</p>
+              <EventMetadata event={selected} />
+              <RegistrationList event={selected} view={panel.view} review={saveSelection} />
+            </div>
+          )}
+          {(panel.kind === "replies" || panel.kind === "registrations") && !selected && <h2 id="dialog-title">Evento removido</h2>}
           {panel.kind === "reply" && (replyEvent?.published ? (
             <ResponseForm key={replyEvent.dateRevision} event={replyEvent}
               available={replyEvent.dateRevision === panel.event.dateRevision ? panel.available : undefined}
@@ -772,6 +789,37 @@ function TeamSelection({ event, save }: { event: AdminEvent; save: (event: Admin
       {error && <p className="form-error" role="alert">{error}</p>}
     </form>
   );
+}
+
+function RegistrationList({ event, view, review }: {
+  event: AdminEvent; view: RegistrationView; review: (event: AdminEvent, decision: RegistrationDecision) => Promise<void>;
+}) {
+  const { busy, error, submit } = useSubmit();
+  const replies = event.replies.filter((reply) => view === "available" ? reply.available : !reply.available && !reply.assignedByAdmin);
+  if (!replies.length) return <p className="registration-empty" role="status">{view === "available"
+    ? "Nenhum fotógrafo inscrito neste evento." : "Nenhum fotógrafo informou indisponibilidade neste evento."}</p>;
+  return <form className="registration-list" method="post" onSubmit={(submission) => {
+    const button = (submission.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    const selection = button?.dataset.selection;
+    if (!button || (selection !== "confirmed" && selection !== "declined")) { submission.preventDefault(); return; }
+    void submit(submission, () => review(event, { replyId: button.value, selection }));
+  }}>
+    <ul>{replies.map((reply) => <li key={reply.id}>
+      <div className="registration-name"><strong>{reply.name}</strong>
+        {view === "available" && <span className={`registration-status ${reply.selection ?? "pending"}`}>
+          {reply.selection === "confirmed" ? "Aprovado" : reply.selection === "declined" ? "Reprovado" : "Aguardando aprovação"}
+        </span>}
+      </div>
+      {view === "available" && <div className="registration-actions">
+        <button className="button outline approve" type="submit" value={reply.id} data-selection="confirmed"
+          aria-label={`Aprovar ${reply.name}`} disabled={busy || !event.selectionVersion || reply.selection === "confirmed"}><Check size={18} /> Aprovar</button>
+        <button className="button outline danger-light" type="submit" value={reply.id} data-selection="declined"
+          aria-label={`Reprovar ${reply.name}`} disabled={busy || !event.selectionVersion || reply.selection === "declined"}><X size={18} /> Reprovar</button>
+      </div>}
+    </li>)}</ul>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {busy && <p className="dialog-subtitle" role="status">Salvando decisão…</p>}
+  </form>;
 }
 
 function UnavailableReplies({ replies }: { replies: AdminReply[] }) {
